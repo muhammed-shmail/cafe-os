@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en" data-surface="home">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cafe OS — Growth Operating System for Cafes</title>
+  <meta name="description" content="Not a POS. A retention engine disguised as a POS." />
+  <link rel="stylesheet" href="styles/theme.css" />
+  <link rel="stylesheet" href="styles/surfaces.css" />
+</head>
+<body>
+  <div class="grain"></div>
+
+  <!-- ===================== TOP CHROME ===================== -->
+  <header class="chrome" id="chrome">
+    <button class="brand" data-go="home" title="Cafe OS home">
+      <span class="brand-mark">◐</span>
+      <span class="brand-name">Cafe<em>OS</em></span>
+    </button>
+
+    <nav class="switcher" id="switcher">
+      <button data-go="pos"       class="sw"><span>⊞</span> POS</button>
+      <button data-go="kds"       class="sw"><span>⊟</span> Kitchen</button>
+      <button data-go="pwa"       class="sw"><span>◉</span> Customer</button>
+      <button data-go="dashboard" class="sw"><span>▤</span> Owner</button>
+    </nav>
+
+    <div class="chrome-right">
+      <span class="pill ok" id="liveBadge"><span class="dot" style="animation:pulse 1.4s infinite"></span> Live demo</span>
+    </div>
+  </header>
+
+  <!-- ===================== STAGE ===================== -->
+  <main id="stage" class="stage"></main>
+
+  <!-- ===================== HOME / LAUNCHER ===================== -->
+  <template id="tpl-home">
+    <section class="home">
+      <div class="home-aura"></div>
+      <div class="home-inner">
+        <p class="eyebrow rise" style="animation-delay:.05s">Growth Operating System · for cafés</p>
+        <h1 class="home-title rise" style="animation-delay:.12s">
+          Not a POS.<br><span class="hl">A retention engine</span><br>disguised as one.
+        </h1>
+        <p class="home-sub rise" style="animation-delay:.2s">
+          Traditional POS ends at the receipt. <strong>Cafe OS begins there</strong> — turning the
+          8&ndash;12 minutes a customer waits into a gamified, point-earning loop that brings them back,
+          on top of a full POS, KDS, inventory & AI stack.
+        </p>
+
+        <div class="surface-deck">
+          <button class="surface-card" data-go="pos" style="animation-delay:.30s">
+            <div class="sc-glyph" style="--c:var(--turmeric)">⊞</div>
+            <h3>Tablet POS</h3>
+            <p>Billing, GST, KOT &amp; split payments. Fast, offline-tolerant, glove-friendly.</p>
+            <span class="sc-go">Open counter →</span>
+          </button>
+          <button class="surface-card" data-go="kds" style="animation-delay:.38s">
+            <div class="sc-glyph" style="--c:var(--clay)">⊟</div>
+            <h3>Kitchen Display</h3>
+            <p>Live ticket queue with prep timers that escalate from green to red. Bump to clear.</p>
+            <span class="sc-go">Open kitchen →</span>
+          </button>
+          <button class="surface-card feature" data-go="pwa" style="animation-delay:.46s">
+            <span class="sc-tag">the magic ✦</span>
+            <div class="sc-glyph" style="--c:var(--berry)">◉</div>
+            <h3>Customer PWA</h3>
+            <p>Scan a table QR → live order status, wait-time games, loyalty wallet &amp; rewards.</p>
+            <span class="sc-go">Scan &amp; play →</span>
+          </button>
+          <button class="surface-card" data-go="dashboard" style="animation-delay:.54s">
+            <div class="sc-glyph" style="--c:var(--cardamom)">▤</div>
+            <h3>Owner Dashboard</h3>
+            <p>Bento analytics, an AI morning briefing, menu engineering &amp; inventory alerts.</p>
+            <span class="sc-go">Open dashboard →</span>
+          </button>
+        </div>
+
+        <div class="loop-strip rise" style="animation-delay:.62s">
+          <span>The loop</span>
+          <em>Order placed</em> → <em>QR scanned</em> → <em>Wait-time play</em> →
+          <em>Points earned</em> → <em>WhatsApp nudge</em> → <em>Return visit</em>
+          <span class="loop-hint">Place an order on the POS and watch it flow live into Kitchen &amp; Customer ↗</span>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <script src="scripts/data.js"></script>
+  <script src="scripts/store.js"></script>
+  <script src="scripts/pos.js"></script>
+  <script src="scripts/kds.js"></script>
+  <script src="scripts/pwa.js"></script>
+  <script src="scripts/dashboard.js"></script>
+  <script src="scripts/shell.js"></script>
+</body>
+</html>

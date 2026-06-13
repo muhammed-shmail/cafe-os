@@ -1,0 +1,156 @@
+/* =========================================================================
+   Cafe OS — Design System  ·  "Roasted Daylight"
+   Warm premium Indian-cafe identity. Cream paper, espresso ink,
+   turmeric primary, cardamom + clay accents.
+   ========================================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,900;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ---- Core palette ------------------------------------------------- */
+  --paper:        #F6EFE3;   /* warm cream background          */
+  --paper-2:      #FBF6EC;   /* lighter card surface          */
+  --paper-3:      #FFFDF8;   /* highest surface               */
+  --ink:          #271811;   /* espresso text                 */
+  --ink-2:        #5B4636;   /* muted brown text              */
+  --ink-3:        #9A8473;   /* faint brown                   */
+  --line:         #E4D7C3;   /* hairline borders              */
+  --line-2:       #D8C7AD;
+
+  /* ---- Brand accents ------------------------------------------------ */
+  --turmeric:     #E8902A;   /* primary — warm amber          */
+  --turmeric-d:   #C9711A;
+  --turmeric-l:   #F7B65A;
+  --cardamom:     #4E7A4A;   /* secondary — fresh green       */
+  --cardamom-d:   #3A5E37;
+  --clay:         #C3492F;   /* reward/celebration rose-clay  */
+  --clay-l:       #E27A5C;
+  --berry:        #8E3B6B;   /* games / play magenta          */
+  --gold:         #D9A93A;   /* loyalty gold                  */
+
+  /* ---- Semantic ----------------------------------------------------- */
+  --ok:           #4E7A4A;
+  --warn:         #D98A2B;
+  --danger:       #C3492F;
+  --info:         #3E6B8C;
+
+  /* ---- Type --------------------------------------------------------- */
+  --display: 'Fraunces', Georgia, serif;
+  --body:    'Hanken Grotesk', system-ui, sans-serif;
+  --mono:    'DM Mono', ui-monospace, monospace;
+
+  /* ---- Geometry ----------------------------------------------------- */
+  --r-sm: 8px;
+  --r:    14px;
+  --r-lg: 22px;
+  --r-xl: 30px;
+  --r-pill: 999px;
+
+  /* ---- Shadows (warm-tinted) --------------------------------------- */
+  --sh-1: 0 1px 2px rgba(60,40,20,.06), 0 1px 3px rgba(60,40,20,.05);
+  --sh-2: 0 4px 14px rgba(60,38,18,.10), 0 2px 6px rgba(60,38,18,.06);
+  --sh-3: 0 16px 40px rgba(50,30,12,.16), 0 6px 14px rgba(50,30,12,.10);
+  --sh-glow: 0 0 0 4px rgba(232,144,42,.16);
+
+  --ease: cubic-bezier(.2,.7,.2,1);
+  --ease-back: cubic-bezier(.34,1.56,.64,1);
+}
+
+/* ---- Dark roast (KDS) tokens, applied via [data-skin="roast"] ------ */
+[data-skin="roast"] {
+  --paper:   #16110D;
+  --paper-2: #211913;
+  --paper-3: #2B201A;
+  --ink:     #F4E9DA;
+  --ink-2:   #C2AC97;
+  --ink-3:   #8A7461;
+  --line:    #34271F;
+  --line-2:  #43332A;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  font-family: var(--body);
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01','cv11';
+}
+
+::selection { background: var(--turmeric); color: #fff; }
+
+h1,h2,h3,h4 { font-family: var(--display); font-weight: 600; letter-spacing: -.01em; line-height: 1.05; }
+.serif { font-family: var(--display); }
+.mono  { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.tnum  { font-variant-numeric: tabular-nums; }
+
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input, select { font-family: inherit; }
+
+/* ---- Scrollbars --------------------------------------------------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 99px; border: 3px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); border: 3px solid transparent; background-clip: padding-box; }
+
+/* ---- Reusable atoms ----------------------------------------------- */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border-radius: var(--r-pill);
+  font-size: 12px; font-weight: 700; letter-spacing: .02em;
+  background: var(--paper-3); border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.pill.ok    { color: var(--ok);    background: color-mix(in srgb, var(--ok) 12%, var(--paper-3)); border-color: color-mix(in srgb, var(--ok) 28%, transparent); }
+.pill.warn  { color: var(--turmeric-d); background: color-mix(in srgb, var(--turmeric) 14%, var(--paper-3)); border-color: color-mix(in srgb, var(--turmeric) 32%, transparent); }
+.pill.danger{ color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--paper-3)); border-color: color-mix(in srgb, var(--danger) 28%, transparent); }
+.pill .dot { width: 7px; height: 7px; border-radius: 99px; background: currentColor; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px 18px; border-radius: var(--r);
+  font-weight: 700; font-size: 14px; letter-spacing: .01em;
+  background: var(--paper-3); color: var(--ink);
+  border: 1px solid var(--line-2);
+  transition: transform .15s var(--ease), box-shadow .2s var(--ease), background .2s;
+  box-shadow: var(--sh-1);
+}
+.btn:hover { transform: translateY(-1px); box-shadow: var(--sh-2); }
+.btn:active { transform: translateY(0) scale(.99); }
+.btn.primary { background: var(--turmeric); color: #2A1607; border-color: var(--turmeric-d); }
+.btn.primary:hover { background: var(--turmeric-l); }
+.btn.dark { background: var(--ink); color: var(--paper-2); border-color: var(--ink); }
+.btn.ghost { background: transparent; box-shadow: none; }
+.btn.lg { padding: 16px 22px; font-size: 16px; border-radius: var(--r-lg); }
+.btn.block { width: 100%; }
+.btn:disabled { opacity: .45; pointer-events: none; }
+
+.card {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-1);
+}
+
+.grain {
+  position: fixed; inset: 0; pointer-events: none; z-index: 9999; opacity: .035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+/* ---- Motion primitives -------------------------------------------- */
+@keyframes rise { from { opacity:0; transform: translateY(14px); } to { opacity:1; transform:none; } }
+@keyframes pop  { 0%{transform:scale(.8);opacity:0} 60%{transform:scale(1.05)} 100%{transform:scale(1);opacity:1} }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.45} }
+@keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+@keyframes floaty { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+
+.rise { animation: rise .5s var(--ease) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}

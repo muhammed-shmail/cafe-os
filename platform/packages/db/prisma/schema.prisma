@@ -1,0 +1,875 @@
+// =========================================================================
+// Cafe OS — Prisma schema  (translated from 03-DATABASE-SCHEMA.md)
+// Multi-tenant. Money is integer paise (*_paise). Timestamps are timestamptz.
+// Append-only ledgers: LoyaltyLedger, StockLedger, AuditLog.
+// Idempotency: Order.clientUuid (safe offline sync).
+// NOTE: Row-Level Security is added in a manual migration (see README §RLS).
+// =========================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ----------------------------- enums -----------------------------
+enum Plan {
+  starter
+  growth
+  pro
+  enterprise
+}
+
+enum StaffRole {
+  owner
+  manager
+  cashier
+  kitchen
+  waiter
+}
+
+enum Station {
+  kitchen
+  bar
+  dessert
+}
+
+enum OrderType {
+  dine_in
+  takeaway
+  delivery
+}
+
+enum OrderStatus {
+  open
+  in_kitchen
+  ready
+  served
+  settled
+  cancelled
+}
+
+enum KotStatus {
+  queued
+  preparing
+  ready
+  served
+  void
+}
+
+enum TableState {
+  free
+  seated
+  billed
+}
+
+enum PayMethod {
+  cash
+  card
+  upi
+  wallet
+  points
+}
+
+enum PayStatus {
+  pending
+  success
+  failed
+  refunded
+}
+
+enum Tier {
+  bronze
+  silver
+  gold
+  vip
+}
+
+enum LedgerType {
+  earn
+  burn
+  expire
+  adjust
+}
+
+enum CouponStatus {
+  issued
+  redeemed
+  expired
+}
+
+enum PoStatus {
+  draft
+  sent
+  received
+  partial
+  cancelled
+}
+
+enum RoomStatus {
+  lobby
+  playing
+  finished
+}
+
+enum Channel {
+  whatsapp
+  sms
+  push
+}
+
+// ===================== 1. Tenancy & Identity =====================
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  plan      Plan     @default(starter)
+  gstin     String?
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  outlets    Outlet[]
+  staff      StaffUser[]
+  roles      Role[]
+  customers  Customer[]
+  vendors    Vendor[]
+  rewards    RewardCatalog[]
+  coupons    Coupon[]
+  games      Game[]
+  badges     Badge[]
+  segments   Segment[]
+  campaigns  Campaign[]
+
+  @@map("tenants")
+}
+
+model Outlet {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  name      String
+  address   Json?
+  gstin     String?
+  stateCode String?  // for CGST/SGST vs IGST
+  timezone  String   @default("Asia/Kolkata")
+  settings  Json     @default("{}")
+
+  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categories   Category[]
+  menuItems    MenuItem[]
+  modifierGrps ModifierGroup[]
+  combos       Combo[]
+  tables       TableMap[]
+  orders       Order[]
+  kots         Kot[]
+  payments     Payment[]
+  stockItems   StockItem[]
+  stockLedger  StockLedger[]
+  wasteLogs    WasteLog[]
+  purchaseOrders PurchaseOrder[]
+  attendance   Attendance[]
+  shifts       Shift[]
+  auditLogs    AuditLog[]
+  loyaltyLedger LoyaltyLedger[]
+  gameSessions GameSession[]
+  gameRooms    GameRoom[]
+  leaderboards Leaderboard[]
+  dailyRollups DailySalesRollup[]
+  itemRollups  ItemSalesRollup[]
+
+  @@index([tenantId])
+  @@map("outlets")
+}
+
+model StaffUser {
+  id          String     @id @default(uuid()) @db.Uuid
+  tenantId    String     @db.Uuid
+  outletId    String?    @db.Uuid
+  name        String
+  phone       String?
+  email       String?
+  pinHash     String?    // fast POS login
+  role        StaffRole
+  permissions Json       @default("[]")
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now()) @db.Timestamptz(6)
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders   Order[]
+  attendance Attendance[]
+  shifts   Shift[]
+  audits   AuditLog[]   @relation("ActorAudits")
+
+  @@index([tenantId, outletId])
+  @@map("staff_users")
+}
+
+model Role {
+  id          String @id @default(uuid()) @db.Uuid
+  tenantId    String @db.Uuid
+  name        String
+  permissions Json
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("roles")
+}
+
+// ===================== 2. Catalog / Menu =====================
+model Category {
+  id       String  @id @default(uuid()) @db.Uuid
+  outletId String  @db.Uuid
+  name     String
+  sort     Int     @default(0)
+  outlet   Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  items    MenuItem[]
+
+  @@index([outletId])
+  @@map("categories")
+}
+
+model MenuItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  outletId    String   @db.Uuid
+  categoryId  String?  @db.Uuid
+  name        String
+  description String?
+  imageUrl    String?
+  pricePaise  Int
+  hsnCode     String?
+  gstRate     Decimal  @db.Decimal(4, 2) // 5.00, 12.00, 18.00
+  isAvailable Boolean  @default(true)
+  station     Station?
+  tags        String[]
+
+  outlet     Outlet     @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  category   Category?  @relation(fields: [categoryId], references: [id])
+  modGroups  ItemModifierGroup[]
+  comboItems ComboItem[]
+  recipes    Recipe[]
+  orderItems OrderItem[]
+  itemRollups ItemSalesRollup[]
+
+  @@index([outletId, categoryId])
+  @@map("menu_items")
+}
+
+model ModifierGroup {
+  id       String  @id @default(uuid()) @db.Uuid
+  outletId String  @db.Uuid
+  name     String
+  min      Int     @default(0)
+  max      Int     @default(1)
+  outlet   Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  modifiers Modifier[]
+  items    ItemModifierGroup[]
+
+  @@map("modifier_groups")
+}
+
+model Modifier {
+  id         String        @id @default(uuid()) @db.Uuid
+  groupId    String        @db.Uuid
+  name       String
+  pricePaise Int           @default(0)
+  group      ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@map("modifiers")
+}
+
+model ItemModifierGroup {
+  itemId  String        @db.Uuid
+  groupId String        @db.Uuid
+  item    MenuItem      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  group   ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([itemId, groupId])
+  @@map("item_modifier_groups")
+}
+
+model Combo {
+  id         String  @id @default(uuid()) @db.Uuid
+  outletId   String  @db.Uuid
+  name       String
+  pricePaise Int
+  outlet     Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  items      ComboItem[]
+
+  @@map("combos")
+}
+
+model ComboItem {
+  comboId String   @db.Uuid
+  itemId  String   @db.Uuid
+  qty     Int      @default(1)
+  combo   Combo    @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  item    MenuItem @relation(fields: [itemId], references: [id])
+
+  @@id([comboId, itemId])
+  @@map("combo_items")
+}
+
+// ===================== 3. Orders, KOT & Payments =====================
+model TableMap {
+  id       String     @id @default(uuid()) @db.Uuid
+  outletId String     @db.Uuid
+  label    String     // "T3"
+  qrToken  String     @unique
+  state    TableState @default(free)
+  seats    Int        @default(2)
+  outlet   Outlet     @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  orders   Order[]
+
+  @@index([outletId])
+  @@map("tables_map")
+}
+
+model Order {
+  id                String      @id @default(uuid()) @db.Uuid
+  clientUuid        String      @unique @db.Uuid // idempotency for offline sync
+  number            Int         // human-friendly per-outlet sequence
+  outletId          String      @db.Uuid
+  tableId           String?     @db.Uuid
+  customerId        String?     @db.Uuid
+  staffId           String?     @db.Uuid
+  type              OrderType
+  status            OrderStatus @default(open)
+  subtotalPaise     Int         @default(0)
+  discountPaise     Int         @default(0)
+  cgstPaise         Int         @default(0)
+  sgstPaise         Int         @default(0)
+  igstPaise         Int         @default(0)
+  serviceChargePaise Int        @default(0)
+  roundOffPaise     Int         @default(0)
+  totalPaise        Int         @default(0)
+  placedAt          DateTime    @default(now()) @db.Timestamptz(6)
+  settledAt         DateTime?   @db.Timestamptz(6)
+
+  outlet   Outlet      @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  table    TableMap?   @relation(fields: [tableId], references: [id])
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  staff    StaffUser?  @relation(fields: [staffId], references: [id])
+  items    OrderItem[]
+  kots     Kot[]
+  payments Payment[]
+  refunds  Refund[]
+  gameSessions GameSession[]
+
+  @@index([outletId, placedAt])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String    @id @default(uuid()) @db.Uuid
+  orderId        String    @db.Uuid
+  itemId         String?   @db.Uuid
+  nameSnapshot   String    // historical bills never change
+  qty            Int
+  unitPricePaise Int
+  modifiers      Json?     // [{ name, pricePaise }]
+  notes          String?
+  station        Station?
+  kotStatus      KotStatus @default(queued)
+
+  order Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  item  MenuItem? @relation(fields: [itemId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Kot {
+  id        String   @id @default(uuid()) @db.Uuid
+  orderId   String   @db.Uuid
+  outletId  String   @db.Uuid
+  station   Station
+  number    Int
+  status    KotStatus @default(queued)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  outlet Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  @@index([outletId, status])
+  @@map("kots")
+}
+
+model Payment {
+  id          String    @id @default(uuid()) @db.Uuid
+  orderId     String    @db.Uuid
+  outletId    String    @db.Uuid
+  method      PayMethod
+  amountPaise Int
+  status      PayStatus @default(pending)
+  providerRef String?   // razorpay payment id
+  meta        Json?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  outlet  Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  refunds Refund[]
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+model Refund {
+  id          String   @id @default(uuid()) @db.Uuid
+  paymentId   String   @db.Uuid
+  orderId     String   @db.Uuid
+  amountPaise Int
+  reason      String?
+  approvedBy  String?  @db.Uuid
+  providerRef String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("refunds")
+}
+
+// ===================== 4. Inventory & Supply =====================
+model StockItem {
+  id             String   @id @default(uuid()) @db.Uuid
+  outletId       String   @db.Uuid
+  name           String
+  unit           String   // g, ml, pcs
+  qtyOnHand      Decimal  @db.Decimal(12, 3) @default(0)
+  reorderLevel   Decimal  @db.Decimal(12, 3) @default(0)
+  avgCostPaise   Int      @default(0)
+  expiryTracking Boolean  @default(false)
+
+  outlet  Outlet        @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  recipes Recipe[]
+  ledger  StockLedger[]
+  waste   WasteLog[]
+  poItems PurchaseOrderItem[]
+
+  @@index([outletId])
+  @@map("stock_items")
+}
+
+model Recipe {
+  id          String    @id @default(uuid()) @db.Uuid
+  itemId      String    @db.Uuid
+  stockItemId String    @db.Uuid
+  qty         Decimal   @db.Decimal(12, 3)
+  item        MenuItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  @@map("recipes")
+}
+
+model StockLedger {
+  id          String    @id @default(uuid()) @db.Uuid
+  outletId    String    @db.Uuid
+  stockItemId String    @db.Uuid
+  change      Decimal   @db.Decimal(12, 3) // +receive / -consume / -waste / +adjust
+  reason      String    // sale|waste|purchase|adjustment|count
+  refId       String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  outlet    Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  stockItem StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  @@index([stockItemId, createdAt])
+  @@map("stock_ledger")
+}
+
+model WasteLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  outletId    String   @db.Uuid
+  stockItemId String   @db.Uuid
+  qty         Decimal  @db.Decimal(12, 3)
+  reason      String   // spoilage|spill|training|return
+  costPaise   Int      @default(0)
+  loggedBy    String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  outlet    Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  stockItem StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  @@map("waste_logs")
+}
+
+model Vendor {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  name        String
+  contact     Json?
+  rating      Decimal? @db.Decimal(2, 1)
+  leadTimeDays Int?
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
+
+  @@map("vendors")
+}
+
+model PurchaseOrder {
+  id         String   @id @default(uuid()) @db.Uuid
+  outletId   String   @db.Uuid
+  vendorId   String   @db.Uuid
+  status     PoStatus @default(draft)
+  totalPaise Int      @default(0)
+  expectedAt DateTime? @db.Date
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  outlet Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+  items  PurchaseOrderItem[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  poId          String    @db.Uuid
+  stockItemId   String    @db.Uuid
+  qty           Decimal   @db.Decimal(12, 3)
+  unitCostPaise Int
+  po            PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  stockItem     StockItem     @relation(fields: [stockItemId], references: [id])
+
+  @@id([poId, stockItemId])
+  @@map("purchase_order_items")
+}
+
+// ===================== 5. Staff Ops =====================
+model Attendance {
+  id       String    @id @default(uuid()) @db.Uuid
+  outletId String    @db.Uuid
+  staffId  String    @db.Uuid
+  clockIn  DateTime  @db.Timestamptz(6)
+  clockOut DateTime? @db.Timestamptz(6)
+  source   String    // pin|qr|geo
+  outlet   Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  staff    StaffUser @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@map("attendance")
+}
+
+model Shift {
+  id       String    @id @default(uuid()) @db.Uuid
+  outletId String    @db.Uuid
+  staffId  String    @db.Uuid
+  startsAt DateTime  @db.Timestamptz(6)
+  endsAt   DateTime  @db.Timestamptz(6)
+  role     String?
+  status   String?
+  outlet   Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  staff    StaffUser @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@map("shifts")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  outletId  String   @db.Uuid
+  actorId   String?  @db.Uuid
+  action    String
+  entity    String
+  entityId  String?  @db.Uuid
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  outlet Outlet     @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  actor  StaffUser? @relation("ActorAudits", fields: [actorId], references: [id])
+
+  @@index([outletId, createdAt])
+  @@map("audit_log")
+}
+
+// ===================== 6. Customers & Loyalty =====================
+model Customer {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @db.Uuid
+  phone              String?
+  phoneHash          String?  // lookups without exposing PII
+  name               String?
+  birthday           DateTime? @db.Date
+  anniversary        DateTime? @db.Date
+  tier               Tier     @default(bronze)
+  points             Int      @default(0)
+  coins              Int      @default(0)
+  lifetimeSpendPaise Int      @default(0)
+  visitCount         Int      @default(0)
+  lastVisit          DateTime? @db.Timestamptz(6)
+  referralCode       String?  @unique
+  referredBy         String?  @db.Uuid
+  deviceFingerprints String[] // anti-abuse
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders     Order[]
+  ledger     LoyaltyLedger[]
+  coupons    Coupon[]
+  sessions   GameSession[]
+  badges     CustomerBadge[]
+  streaks    Streak[]
+  refsMade   Referral[]      @relation("Referrer")
+  refsGot    Referral[]      @relation("Referred")
+  roomPlays  GameRoomPlayer[]
+  hostedRooms GameRoom[]     @relation("RoomHost")
+  campaignSends CampaignSend[]
+
+  @@index([tenantId])
+  @@index([phoneHash])
+  @@index([referralCode])
+  @@map("customers")
+}
+
+model LoyaltyLedger {
+  id         String     @id @default(uuid()) @db.Uuid
+  customerId String     @db.Uuid
+  outletId   String?    @db.Uuid
+  type       LedgerType
+  points     Int        @default(0)
+  coins      Int        @default(0)
+  source     String     // order|game|referral|checkin|birthday|streak
+  refId      String?    @db.Uuid
+  createdAt  DateTime   @default(now()) @db.Timestamptz(6)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  outlet   Outlet?  @relation(fields: [outletId], references: [id])
+
+  @@index([customerId, createdAt])
+  @@map("loyalty_ledger")
+}
+
+model RewardCatalog {
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @db.Uuid
+  name      String
+  type      String  // coupon|free_item|bogo|cashback|topping
+  costPoints Int
+  value     Json?
+  stock     Int?
+  active    Boolean @default(true)
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  coupons   Coupon[]
+
+  @@map("rewards_catalog")
+}
+
+model Coupon {
+  id             String       @id @default(uuid()) @db.Uuid
+  tenantId       String       @db.Uuid
+  customerId     String?      @db.Uuid
+  code           String       @unique
+  rewardId       String?      @db.Uuid
+  status         CouponStatus @default(issued)
+  source         String?
+  expiresAt      DateTime?    @db.Timestamptz(6)
+  redeemedOrderId String?     @db.Uuid
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer?      @relation(fields: [customerId], references: [id])
+  reward   RewardCatalog? @relation(fields: [rewardId], references: [id])
+
+  @@index([customerId])
+  @@map("coupons")
+}
+
+// ===================== 7. Gamification & Social =====================
+model Game {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @db.Uuid
+  key      String  // spin_wheel|scratch|trivia|memory
+  name     String
+  config   Json?
+  active   Boolean @default(true)
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessions GameSession[]
+
+  @@map("games")
+}
+
+model GameSession {
+  id                String   @id @default(uuid()) @db.Uuid
+  customerId        String   @db.Uuid
+  outletId          String   @db.Uuid
+  gameId            String   @db.Uuid
+  orderId           String?  @db.Uuid
+  result            Json?
+  rewardCouponId    String?  @db.Uuid
+  deviceFingerprint String?
+  ip                String?
+  startedAt         DateTime @default(now()) @db.Timestamptz(6)
+  endedAt           DateTime? @db.Timestamptz(6)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  outlet   Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  game     Game     @relation(fields: [gameId], references: [id])
+  order    Order?   @relation(fields: [orderId], references: [id])
+
+  @@index([customerId, startedAt])
+  @@map("game_sessions")
+}
+
+model GameRoom {
+  id             String     @id @default(uuid()) @db.Uuid
+  outletId       String     @db.Uuid
+  hostCustomerId String?    @db.Uuid
+  joinCode       String     @unique
+  gameKey        String
+  status         RoomStatus @default(lobby)
+  config         Json?
+  createdAt      DateTime   @default(now()) @db.Timestamptz(6)
+
+  outlet  Outlet           @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  host    Customer?        @relation("RoomHost", fields: [hostCustomerId], references: [id])
+  players GameRoomPlayer[]
+
+  @@map("game_rooms")
+}
+
+model GameRoomPlayer {
+  roomId     String   @db.Uuid
+  customerId String   @db.Uuid
+  score      Int      @default(0)
+  joinedAt   DateTime @default(now()) @db.Timestamptz(6)
+  room       GameRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, customerId])
+  @@map("game_room_players")
+}
+
+model Badge {
+  id          String  @id @default(uuid()) @db.Uuid
+  tenantId    String  @db.Uuid
+  key         String
+  name        String
+  description String?
+  icon        String?
+  criteria    Json?
+  tier        String? // bronze|silver|gold
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  earnedBy    CustomerBadge[]
+
+  @@map("badges")
+}
+
+model CustomerBadge {
+  customerId String   @db.Uuid
+  badgeId    String   @db.Uuid
+  earnedAt   DateTime @default(now()) @db.Timestamptz(6)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  badge      Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, badgeId])
+  @@map("customer_badges")
+}
+
+model Leaderboard {
+  id       String @id @default(uuid()) @db.Uuid
+  outletId String @db.Uuid
+  period   String // daily|weekly|all_time
+  metric   String // points|visits|games
+  outlet   Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  @@map("leaderboards")
+}
+
+model Streak {
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @db.Uuid
+  kind       String   // daily_checkin|weekly_visit
+  current    Int      @default(0)
+  longest    Int      @default(0)
+  lastAt     DateTime? @db.Date
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("streaks")
+}
+
+model Referral {
+  id             String   @id @default(uuid()) @db.Uuid
+  referrerId     String   @db.Uuid
+  referredId     String   @db.Uuid
+  status         String   // pending|qualified|rewarded
+  rewardCouponId String?  @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  referrer Customer @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referred Customer @relation("Referred", fields: [referredId], references: [id], onDelete: Cascade)
+
+  @@map("referrals")
+}
+
+// ===================== 8. Campaigns & Notifications =====================
+model Segment {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @db.Uuid
+  name     String
+  rules    Json
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@map("segments")
+}
+
+model Campaign {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  channel     Channel
+  segmentId   String?  @db.Uuid
+  template    Json?
+  status      String?
+  scheduledAt DateTime? @db.Timestamptz(6)
+  createdBy   String?  @db.Uuid
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  segment Segment? @relation(fields: [segmentId], references: [id])
+  sends   CampaignSend[]
+
+  @@map("campaigns")
+}
+
+model CampaignSend {
+  id         String    @id @default(uuid()) @db.Uuid
+  campaignId String    @db.Uuid
+  customerId String    @db.Uuid
+  status     String?
+  sentAt     DateTime? @db.Timestamptz(6)
+  openedAt   DateTime? @db.Timestamptz(6)
+  clickedAt  DateTime? @db.Timestamptz(6)
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("campaign_sends")
+}
+
+// ===================== 9. Analytics Rollups =====================
+model DailySalesRollup {
+  outletId      String   @db.Uuid
+  day           DateTime @db.Date
+  orders        Int      @default(0)
+  grossPaise    Int      @default(0)
+  discountPaise Int      @default(0)
+  taxPaise      Int      @default(0)
+  cogsPaise     Int      @default(0)
+  netPaise      Int      @default(0)
+  outlet        Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  @@id([outletId, day])
+  @@map("daily_sales_rollup")
+}
+
+model ItemSalesRollup {
+  outletId     String   @db.Uuid
+  day          DateTime @db.Date
+  itemId       String   @db.Uuid
+  qty          Int      @default(0)
+  revenuePaise Int      @default(0)
+  outlet       Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  item         MenuItem @relation(fields: [itemId], references: [id])
+
+  @@id([outletId, day, itemId])
+  @@map("item_sales_rollup")
+}

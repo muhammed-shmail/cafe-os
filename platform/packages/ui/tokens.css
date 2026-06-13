@@ -1,0 +1,37 @@
+/* =========================================================================
+   Cafe OS — design tokens ("Roasted Daylight")
+   Fonts are injected by next/font as --font-display / --font-body / --font-mono.
+   ========================================================================= */
+:root {
+  --paper: #F6EFE3;  --paper-2: #FBF6EC;  --paper-3: #FFFDF8;
+  --ink: #271811;    --ink-2: #5B4636;    --ink-3: #9A8473;
+  --line: #E4D7C3;   --line-2: #D8C7AD;
+
+  --turmeric: #E8902A; --turmeric-d: #C9711A; --turmeric-l: #F7B65A;
+  --cardamom: #4E7A4A; --cardamom-d: #3A5E37;
+  --clay: #C3492F;     --clay-l: #E27A5C;
+  --berry: #8E3B6B;    --gold: #D9A93A;
+
+  --sh-1: 0 1px 2px rgba(60,40,20,.06), 0 1px 3px rgba(60,40,20,.05);
+  --sh-2: 0 4px 14px rgba(60,38,18,.10), 0 2px 6px rgba(60,38,18,.06);
+  --sh-3: 0 16px 40px rgba(50,30,12,.16), 0 6px 14px rgba(50,30,12,.10);
+  --sh-glow: 0 0 0 4px rgba(232,144,42,.16);
+}
+
+/* Dark roast skin for the KDS surface */
+[data-skin="roast"] {
+  --paper: #16110D;  --paper-2: #211913;  --paper-3: #2B201A;
+  --ink: #F4E9DA;    --ink-2: #C2AC97;    --ink-3: #8A7461;
+  --line: #34271F;   --line-2: #43332A;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.font-display { font-family: var(--font-display), serif; }
+.tnum { font-variant-numeric: tabular-nums; }

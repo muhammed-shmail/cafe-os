@@ -1,0 +1,32 @@
+{
+  "name": "cafe-os",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cafe OS — Growth Operating System for cafes (fast-path monorepo)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:local": "npm run -w @cafeos/db local",
+    "db:generate": "npm run -w @cafeos/db generate",
+    "db:push": "npm run -w @cafeos/db push",
+    "db:migrate": "npm run -w @cafeos/db migrate",
+    "db:seed": "npm run -w @cafeos/db seed",
+    "db:studio": "npm run -w @cafeos/db studio"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^7.4.2",
+    "turbo": "^2.1.0",
+    "typescript": "^5.6.0",
+    "prettier": "^3.3.0"
+  },
+  "packageManager": "npm@10.8.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

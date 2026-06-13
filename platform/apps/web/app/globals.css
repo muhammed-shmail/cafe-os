@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  h1, h2, h3, h4 { font-family: var(--font-display), serif; letter-spacing: -0.01em; }
+  ::selection { background: var(--turmeric); color: #fff; }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-[14px] px-4 py-3 font-bold text-sm transition;
+    background: var(--paper-3); color: var(--ink); border: 1px solid var(--line-2); box-shadow: var(--sh-1);
+  }
+  .btn:hover { box-shadow: var(--sh-2); transform: translateY(-1px); }
+  .btn:disabled { opacity: .45; pointer-events: none; }
+  .btn-primary { background: var(--turmeric); color: #2A1607; border-color: var(--turmeric-d); }
+  .btn-dark { background: var(--ink); color: var(--paper-2); border-color: var(--ink); }
+
+  .card { background: var(--paper-2); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--sh-1); }
+
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold;
+    background: var(--paper-3); border: 1px solid var(--line); color: var(--ink-2);
+  }
+}
