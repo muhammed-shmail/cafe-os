@@ -109,14 +109,14 @@ Cards: kitchen progress · live status · fun facts · brand story · mini-chall
 
 ---
 
-## Part B — AI Assistants (Claude-powered)
+## Part B — AI Assistants (Gemini-powered)
 
-All three are **server-side Claude (Anthropic API) with tool-use**: Claude reasons, calls our read-only analytics tools to pull real numbers, then returns plain-language, India-context answers. Use **Opus 4.8** for the reasoning-heavy assistants and **Haiku 4.5** for cheap, high-volume tasks (classification, short copy, intent routing). Use **prompt caching** on the schema/system context to cut cost, and run everything async via BullMQ.
+All three are **server-side Gemini (Google Gemini API) with tool-use**: Gemini reasons, calls our read-only analytics tools to pull real numbers, then returns plain-language, India-context answers. Use **Gemini 1.5 Pro** for the reasoning-heavy assistants and **Gemini 1.5 Flash** for cheap, high-volume tasks (classification, short copy, intent routing). Use caching on the schema/system context to cut cost, and run everything async via BullMQ.
 
 ### B.1 AI Sales Assistant
 **Answers questions like:** "Why are sales down this week?" · "What's performing well?" · "What should I promote tomorrow?"
 
-**How:** Claude is given tools `get_sales(range)`, `compare_periods()`, `get_top_items()`, `get_slow_items()`, `get_dayparts()`, `get_weather()`, `get_footfall()`. It investigates (e.g., notices Tue–Wed dip correlates with rain + a slow dessert), then returns:
+**How:** Gemini is given tools `get_sales(range)`, `compare_periods()`, `get_top_items()`, `get_slow_items()`, `get_dayparts()`, `get_weather()`, `get_footfall()`. It investigates (e.g., notices Tue–Wed dip correlates with rain + a slow dessert), then returns:
 ```json
 {
   "summary": "Sales down 12% WoW, driven by weekday evenings.",
@@ -142,12 +142,12 @@ Also a **proactive Morning Briefing** (`/ai/insights/daily`): a daily WhatsApp/d
 - **Waste insights** ("croissant waste = ₹2,400/mo; bake 30% fewer after 6pm or run an evening 'last batch' offer").
 - **Expiry watch** ("milk expiring in 2 days, current run-rate won't clear it → push a latte offer").
 
-Forecasting = statistical baseline (moving average + seasonality) with Claude as the **explainer & action-recommender** on top, so it's transparent and cheap, not a black box.
+Forecasting = statistical baseline (moving average + seasonality) with Gemini as the **explainer & action-recommender** on top, so it's transparent and cheap, not a black box.
 
 ### B.3 AI Marketing Assistant
 **Auto-generates:** WhatsApp campaigns, SMS, push notifications, loyalty campaigns.
 
-**How:** given a goal ("win back lapsed customers") + segment + channel, Claude drafts on-brand, India-context copy (Hinglish optional), picks the audience via segment rules, suggests timing, and proposes the offer — owner approves with one tap.
+**How:** given a goal ("win back lapsed customers") + segment + channel, Gemini drafts on-brand, India-context copy (Hinglish optional), picks the audience via segment rules, suggests timing, and proposes the offer — owner approves with one tap.
 - **Auto-segmentation:** "lapsed 30d", "high-value at risk", "birthday this week", "tried coffee but never dessert".
 - **Campaign templates:** win-back, birthday, festival, new-item launch, slow-hour filler, weekend booster.
 - **Optimization:** learns which copy/offer/time drives redemptions; A/B tests subject lines; reports ROI ("₹4,200 spend → ₹38,000 attributed revenue").

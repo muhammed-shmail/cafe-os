@@ -35,7 +35,7 @@
    | `DATABASE_URL` | Neon pooled connection string |
    | `DIRECT_URL` | Neon direct connection string |
    | `JWT_SECRET` | Long random string (e.g., `openssl rand -base64 48`) |
-   | `ANTHROPIC_API_KEY` | Your API key (from console.anthropic.com) |
+   | `GEMINI_API_KEY` | Your API key (from Google AI Studio) |
    | `RAZORPAY_KEY_ID` | Test or live key (when ready) |
    | `RAZORPAY_KEY_SECRET` | Test or live secret |
    | `RAZORPAY_WEBHOOK_SECRET` | Webhook secret |

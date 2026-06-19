@@ -9,12 +9,110 @@ export const dynamic = 'force-dynamic';
 
 const Body = z.object({ q: z.string().min(1).max(500) });
 
+async function askGemini(
+  qRaw: string,
+  d: Awaited<ReturnType<typeof getDashboardData>>
+): Promise<{ reply: string; lang: Lang } | null> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'AIzaSy-xxxx' || apiKey.includes('xxxx')) {
+    return null;
+  }
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const systemInstruction = `You are the Cafe OS AI Sales Assistant, a helpful, expert Indian Cafe operations co-pilot.
+You have access to live analytics data for the user's cafe outlet.
+Your task is to answer the user's question accurately and helpfully using the provided live analytics JSON data.
+Ground all your responses, sales figures, and inventory details in the provided live analytics data.
+
+Expected Output Format:
+Your output MUST be a JSON object matching this schema:
+{
+  "reply": "Your markdown-formatted response string",
+  "lang": "en" | "ml"
+}
+
+Formatting rules for "reply":
+- Use standard HTML/markdown tags for rendering in the web interface.
+- Highlight important metrics, names, and numbers using <b>...</b> tags.
+- Highlight recommended actions/tips/next steps using <span class="msg-act">...</span> tags (e.g. <span class="msg-act">Tip: set up a buy-one-get-one promotion.</span>).
+- Avoid raw markdown asterisks (like **text**) in the final string; use <b>...</b> instead for consistency.
+
+Language rules for "reply" and "lang":
+- Determine the language based on the user's question. If the user asks in Malayalam (or uses Malayalam characters), respond in Malayalam and set "lang" to "ml".
+- Otherwise, respond in English (with Indian English context/ Hinglish if appropriate) and set "lang" to "en".`;
+
+    const prompt = `User question: "${qRaw}"
+
+Live Analytics Data:
+${JSON.stringify(d, null, 2)}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }]
+          }
+        ],
+        systemInstruction: {
+          parts: [{ text: systemInstruction }]
+        },
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'object',
+            properties: {
+              reply: {
+                type: 'string',
+                description: 'The response string containing HTML tags like <b> for highlights and <span class="msg-act"> for recommendations.'
+              },
+              lang: {
+                type: 'string',
+                enum: ['en', 'ml'],
+                description: 'The language of the response.'
+              }
+            },
+            required: ['reply', 'lang']
+          }
+        }
+      })
+    });
+
+    if (!response.ok) {
+      console.error('Gemini API returned error status:', response.status);
+      return null;
+    }
+
+    const result = await response.json();
+    const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      console.error('Gemini API returned empty text');
+      return null;
+    }
+
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed.reply === 'string' && (parsed.lang === 'en' || parsed.lang === 'ml')) {
+      return parsed;
+    }
+    return null;
+  } catch (err) {
+    console.error('Failed to query Gemini API:', err);
+    return null;
+  }
+}
+
 /**
  * POST /api/dashboard/assistant — the Owner Dashboard's Sales Assistant.
  *
  * Owner/manager only. Answers are grounded in the SAME live analytics the
  * dashboard renders, so the numbers always agree with the tiles. This is an
- * intentionally deterministic responder; swapping in a Claude (Opus 4.8) call
+ * intentionally deterministic responder; swapping in a Gemini (1.5 Flash) call
  * is a drop-in replacement here — feed `data` as context and return the reply.
  */
 export async function POST(req: NextRequest) {
@@ -27,7 +125,8 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: 'invalid' }, { status: 400 });
 
   const data = await getDashboardData(session.outletId);
-  const { reply, lang } = answer(parsed.data.q, data);
+  const geminiResult = await askGemini(parsed.data.q, data);
+  const { reply, lang } = geminiResult || answer(parsed.data.q, data);
   // `lang` tells the client which voice (ml-IN / en-IN) to read the reply with
   return NextResponse.json({ reply, lang });
 }

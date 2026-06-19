@@ -14,7 +14,7 @@
 | Cloud | **AWS** (ECS Fargate / EKS) | Managed, scalable |
 | Payments | **Razorpay** | UPI dynamic QR, cards, settlement, refunds |
 | Messaging | **WhatsApp Cloud API**, **Firebase Cloud Messaging** | Campaigns + push |
-| AI | **Anthropic Claude API** (Opus 4.8 / Haiku 4.5) | Assistants, forecasting copilots, campaign copy |
+| AI | **Google Gemini API** (1.5 Pro / Flash) | Assistants, forecasting copilots, campaign copy |
 | Search/analytics (later) | ClickHouse or Postgres + Timescale | High-volume event analytics |
 
 ## 2. System Diagram (logical)
@@ -46,7 +46,7 @@
         │ + read replica│ │ leaderb)│ │          │  │  WhatsApp, AI,   │
         └──────────────┘  └────────┘  └──────────┘  │  forecasts)      │
                                                      └──────────────────┘
-   External: Razorpay │ WhatsApp Cloud API │ FCM │ Anthropic Claude API
+   External: Razorpay │ WhatsApp Cloud API │ FCM │ Google Gemini API
 ```
 
 ## 3. Service / Module Decomposition (NestJS modules)
@@ -64,7 +64,7 @@
 - **social** — leaderboards, badges/achievements, referrals.
 - **campaigns** — segments, WhatsApp/SMS/push sends, automation triggers.
 - **analytics** — aggregations, reports, menu engineering.
-- **ai** — Claude-backed assistants (sales, inventory, marketing) with tool/function calling into our own analytics APIs.
+- **ai** — Gemini-backed assistants (sales, inventory, marketing) with tool/function calling into our own analytics APIs.
 - **notifications** — FCM + WhatsApp dispatch, templating.
 
 ## 4. Realtime Design (Socket.IO + Redis adapter)
@@ -87,10 +87,10 @@ Redis Pub/Sub adapter lets Socket.IO scale horizontally across nodes. Leaderboar
 
 ## 6. AI Service Pattern
 
-Claude is called server-side only (keys never on client). Pattern = **tool use / function calling**:
+Gemini is called server-side only (keys never on client). Pattern = **tool use / function calling**:
 1. User asks AI assistant a question in dashboard.
-2. NestJS `ai` module sends prompt + a toolset (`get_sales`, `get_top_items`, `get_inventory`, `get_forecast`) to **Claude (Opus 4.8 for reasoning, Haiku 4.5 for cheap/fast tasks)**.
-3. Claude calls our internal analytics tools → we execute SQL → return JSON → Claude synthesizes a plain-language, India-context answer with recommended actions.
+2. NestJS `ai` module sends prompt + a toolset (`get_sales`, `get_top_items`, `get_inventory`, `get_forecast`) to **Gemini (1.5 Pro for reasoning, 1.5 Flash for cheap/fast tasks)**.
+3. Gemini calls our internal analytics tools → we execute SQL → return JSON → Gemini synthesizes a plain-language, India-context answer with recommended actions.
 4. Responses cached (Redis) where deterministic. Prompt caching used for the system/schema context to cut cost.
 
 See [06](06-RETENTION-AND-AI.md) for assistant specs and [04](04-API-STRUCTURE.md) §AI for endpoints.

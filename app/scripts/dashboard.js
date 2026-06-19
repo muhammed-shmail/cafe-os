@@ -85,7 +85,7 @@ CAFE.DASH = (() => {
 
           <!-- AI assistant chat -->
           <section class="bento-card assistant span-2">
-            <div class="bc-head"><span class="bc-ai">🤖 Sales Assistant</span><span class="bc-time">Claude · Opus 4.8</span></div>
+            <div class="bc-head"><span class="bc-ai">🤖 Sales Assistant</span><span class="bc-time">Gemini · 1.5 Flash</span></div>
             <div class="chat" id="chat">
               <div class="msg ai">Ask me anything — “why are sales down?”, “what should I promote tonight?”</div>
             </div>

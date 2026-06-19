@@ -14,7 +14,7 @@
     "NEXT_PUBLIC_PUSHER_KEY",
     "NEXT_PUBLIC_PUSHER_CLUSTER",
     "JWT_SECRET",
-    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
     "WHATSAPP_TOKEN"
   ],
   "tasks": {

@@ -106,14 +106,14 @@ GET    /analytics/customers/retention   cohorts + RFM
 GET    /analytics/loyalty               redemption, point liability, engagement
 ```
 
-## AI Assistants (Claude-backed, server-side)
+## AI Assistants (Gemini-backed, server-side)
 ```
 POST   /ai/sales/ask        { question }   -> answer + cited metrics + actions
 POST   /ai/inventory/forecast { item_id?, horizon_days }  -> demand + reorder suggestion
 POST   /ai/marketing/campaign { goal, segment, channel }  -> draft copy + audience + schedule
 GET    /ai/insights/daily   proactive "morning briefing" insights
 ```
-*Implementation:* these endpoints invoke Claude with tool-use; Claude calls internal read-only analytics tools, then returns structured `{summary, findings[], recommendations[]}`. Opus 4.8 for reasoning-heavy asks; Haiku 4.5 for classification/short copy. See [06](06-RETENTION-AND-AI.md).
+*Implementation:* these endpoints invoke Gemini with tool-use; Gemini calls internal read-only analytics tools, then returns structured `{summary, findings[], recommendations[]}`. 1.5 Pro for reasoning-heavy asks; 1.5 Flash for classification/short copy. See [06](06-RETENTION-AND-AI.md).
 
 ## Campaigns & Notifications
 ```
