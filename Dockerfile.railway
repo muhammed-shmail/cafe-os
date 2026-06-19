@@ -5,6 +5,8 @@ WORKDIR /app
 # Copy package files explicitly
 COPY platform/package.json .
 COPY platform/package-lock.json .
+COPY platform/turbo.json .
+COPY platform/tsconfig.base.json .
 
 # Copy the entire platform directory structure
 COPY platform/apps ./apps
