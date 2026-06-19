@@ -6,7 +6,8 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx src/gst.test.ts"
+    "test": "tsx src/gst.test.ts && tsx src/units.test.ts",
+    "test:units": "tsx src/units.test.ts"
   },
   "dependencies": {
     "zod": "^3.23.8"

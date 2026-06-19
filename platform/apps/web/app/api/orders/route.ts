@@ -3,6 +3,10 @@ import { prisma, type Prisma } from '@cafeos/db';
 import { CreateOrderSchema, computeBill, type BillLine } from '@cafeos/core';
 import { getSession } from '@/lib/auth';
 import { publish, toTicket } from '@/lib/realtime';
+import { applyRecipeConsumption, emitLowStockAlerts } from '@/lib/inventory';
+import { alertLargeDiscount } from '@/lib/alerts';
+import { getOutletGst, gstBillOptions } from '@/lib/tax';
+import { getOutletPwa } from '@/lib/pwa';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,14 +45,19 @@ export async function POST(req: NextRequest) {
     gstRate: l.gstRate,
     qty: l.qty,
   }));
+  const gst = await getOutletGst(outletId);
+  const pwa = await getOutletPwa(outletId);
   const bill = computeBill(billLines, {
     discountPct: input.discountPct,
     serviceChargePct: input.serviceChargePct,
     interState: input.interState,
+    ...gstBillOptions(gst),
   });
 
   const settling = !!input.payment;
   const number = await nextNumber(outletId);
+  // stock items consumed by this order's recipes (captured in-tx, alerted post-commit)
+  let consumedStockIds: string[] = [];
 
   // stations needing a KOT
   const stations = Array.from(
@@ -115,9 +124,15 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        // loyalty: 1 point per ₹10 spent, on settle (append-only ledger)
+        // loyalty: configurable earn rate (default 1pt per ₹10) + optional first-order bonus,
+        // on settle (append-only ledger). Defaults preserve the original behaviour exactly.
         if (input.customerId) {
-          const points = Math.floor(bill.totalPaise / 1000);
+          const rate = pwa.points.earnRatePaisePerPoint; // paise per earned point
+          let points = Math.floor(bill.totalPaise / rate);
+          const prior = await tx.customer.findUnique({ where: { id: input.customerId }, select: { visitCount: true } });
+          if ((!prior || prior.visitCount === 0) && pwa.loyalty.rewards.firstOrderBonus > 0) {
+            points += pwa.loyalty.rewards.firstOrderBonus;
+          }
           await tx.loyaltyLedger.create({
             data: { customerId: input.customerId, outletId, type: 'earn', points, source: 'order', refId: created.id },
           });
@@ -133,11 +148,23 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // recipe-based inventory: deduct raw materials + append the stock ledger,
+      // atomically with the order. No-ops for items without a recipe.
+      consumedStockIds = await applyRecipeConsumption(tx, {
+        outletId,
+        orderId: created.id,
+        lines: input.lines.map((l) => ({ itemId: l.itemId, qty: l.qty })),
+      });
+
       return created;
     });
 
     // fan out to every KDS subscribed to this outlet
     publish(outletId, { type: 'order.new', ticket: toTicket(order) });
+    // raise low-stock alerts for anything that dipped below reorder (best effort)
+    await emitLowStockAlerts(outletId, consumedStockIds);
+    // owner alert: unusually large discount on this ticket
+    if (input.discountPct > 0) await alertLargeDiscount(outletId, { number: order.number, discountPct: input.discountPct, discountPaise: bill.discountPaise });
     return NextResponse.json({ order, bill }, { status: 201 });
   } catch (e) {
     // unique violation on clientUuid race → fetch and return idempotently

@@ -5,7 +5,7 @@ import { getSectionData, type SectionName } from '@/lib/sections';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const SECTIONS: SectionName[] = ['sales', 'inventory', 'staff', 'loyalty', 'marketing', 'menu', 'settings'];
+const SECTIONS: SectionName[] = ['monitor', 'sales', 'inventory', 'suppliers', 'tables', 'staff', 'loyalty', 'marketing', 'menu', 'settings', 'pwa'];
 
 /**
  * GET /api/dashboard/section?s=<name> — deep-section data for the Owner Dashboard.

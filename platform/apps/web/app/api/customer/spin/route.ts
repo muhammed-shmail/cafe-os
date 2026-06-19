@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '@cafeos/db';
 import { resolveTable, activeOrderForTable, resolveCustomerId, CUSTOMER_COOKIE } from '@/lib/customer';
 import { WHEEL, WHEEL_TOTAL_WEIGHT, pickIndex } from '@/lib/wheel';
+import { getOutletPwa, gameUnlocked, startOfTodayIST } from '@/lib/pwa';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,10 +33,24 @@ export async function POST(req: NextRequest) {
 
   const order = await activeOrderForTable(table.id);
 
-  // cap: 1 spin per active order (or per day if no order)
+  // owner gamification gating (additive — defaults leave behaviour unchanged)
+  const cfg = await getOutletPwa(table.outlet.id);
+  const gate = gameUnlocked(cfg, 'spin_wheel', order?.totalPaise ?? 0);
+  if (!gate.ok) return NextResponse.json({ error: gate.reason === 'min_order' ? 'locked' : gate.reason === 'hours' ? 'closed' : 'disabled', minOrderPaise: cfg.gamification.games.find((g) => g.key === 'spin_wheel')?.minOrderPaise ?? 0 }, { status: 403 });
+
+  // optional max-games-per-day cap across ALL games (IST day)
+  if (cfg.gamification.maxGamesPerDay > 0) {
+    const playedToday = await prisma.gameSession.count({ where: { customerId, startedAt: { gte: startOfTodayIST() } } });
+    if (playedToday >= cfg.gamification.maxGamesPerDay) return NextResponse.json({ error: 'day_limit' }, { status: 429 });
+  }
+
+  // cap: 1 spin per active order (or per day if no order). Scoped to the
+  // spin_wheel game so the Quick Cafe Games (which also write GameSession rows)
+  // never silently eat the guest's spin.
+  const spinWheel = { game: { key: 'spin_wheel' as const } };
   const cap = order
-    ? await prisma.gameSession.count({ where: { customerId, orderId: order.id } })
-    : await prisma.gameSession.count({ where: { customerId, startedAt: { gte: startOfToday() } } });
+    ? await prisma.gameSession.count({ where: { customerId, orderId: order.id, ...spinWheel } })
+    : await prisma.gameSession.count({ where: { customerId, startedAt: { gte: startOfToday() }, ...spinWheel } });
   if (cap > 0) return NextResponse.json({ error: 'no_spins_left' }, { status: 429 });
 
   // ensure a Game row exists for spin_wheel (find-or-create)
@@ -43,8 +58,20 @@ export async function POST(req: NextRequest) {
   if (!game) game = await prisma.game.create({ data: { tenantId, key: 'spin_wheel', name: 'Spin the Wheel', active: true } });
 
   // --- authoritative result (crypto-fair, server-side only) ---
-  const index = pickIndex(randomInt(WHEEL_TOTAL_WEIGHT));
+  // owner can override the per-segment odds; default uses the wheel's own weights.
+  const ow = cfg.gamification.spin.weights;
+  let index: number;
+  if (ow && ow.length === WHEEL.length && ow.some((w) => w > 0)) {
+    const total = ow.reduce((a, b) => a + b, 0);
+    let r = randomInt(total), acc = 0;
+    index = WHEEL.length - 1;
+    for (let i = 0; i < ow.length; i++) { acc += ow[i]!; if (r < acc) { index = i; break; } }
+  } else {
+    index = pickIndex(randomInt(WHEEL_TOTAL_WEIGHT));
+  }
   const seg = WHEEL[index]!;
+  const mult = cfg.gamification.spin.pointsMultiplier;
+  const coinAward = seg.kind === 'coins' ? Math.max(0, Math.round(Number(seg.value) * mult)) : 0;
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null;
 
   const result = await prisma.$transaction(async (tx) => {
@@ -59,8 +86,8 @@ export async function POST(req: NextRequest) {
 
     let coupon: { code: string } | null = null;
     if (seg.kind === 'coins') {
-      await tx.customer.update({ where: { id: customerId }, data: { coins: { increment: Number(seg.value) } } });
-      await tx.loyaltyLedger.create({ data: { customerId, outletId: table.outlet.id, type: 'earn', coins: Number(seg.value), source: 'game', refId: session.id } });
+      await tx.customer.update({ where: { id: customerId }, data: { coins: { increment: coinAward } } });
+      await tx.loyaltyLedger.create({ data: { customerId, outletId: table.outlet.id, type: 'earn', coins: coinAward, source: 'game', refId: session.id } });
     } else if (seg.kind === 'coupon') {
       const code = 'KH-' + randomBytes(3).toString('hex').toUpperCase();
       const c = await tx.coupon.create({

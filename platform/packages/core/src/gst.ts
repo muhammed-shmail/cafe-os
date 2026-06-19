@@ -28,6 +28,25 @@ export interface BillOptions {
   serviceChargePct?: number;
   /** true = inter-state supply → IGST instead of CGST/SGST */
   interState?: boolean;
+  /**
+   * Whether GST is charged at all. Defaults to true (registered outlet).
+   * Set false for an unregistered shop — every line's tax becomes 0.
+   */
+  gstEnabled?: boolean;
+  /**
+   * Flat GST rate (percent) applied to EVERY line, overriding each item's own
+   * gstRate. Use when a shop bills a single rate instead of per-item rates.
+   * Ignored when GST is disabled or when null/undefined.
+   */
+  gstRateOverride?: number | null;
+  /**
+   * Tax mode. false/undefined (default) = EXCLUSIVE: the line price is the
+   * pre-tax base and GST is added on top. true = INCLUSIVE: the line price
+   * already contains GST, which is extracted out so the total equals the menu
+   * price. Inclusive is implemented by billing each line's net-of-tax price
+   * through the exact same exclusive math, so exclusive results never change.
+   */
+  gstInclusive?: boolean;
 }
 
 export interface Bill {
@@ -53,11 +72,28 @@ export function computeBill(lines: BillLine[], opts: BillOptions = {}): Bill {
   const discountPct = clampPct(opts.discountPct ?? 0);
   const scPct = clampPct(opts.serviceChargePct ?? 0);
   const interState = !!opts.interState;
+  // GST gating: off ⇒ no tax; a flat override replaces every line's own rate.
+  const gstEnabled = opts.gstEnabled !== false;
+  const rawOverride = opts.gstRateOverride;
+  const rateOverride =
+    gstEnabled && rawOverride != null && !Number.isNaN(rawOverride) && rawOverride > 0
+      ? clampPct(rawOverride)
+      : null;
+  const inclusive = gstEnabled && !!opts.gstInclusive;
 
-  const subtotalPaise = lines.reduce(
-    (sum, l) => sum + (l.pricePaise + (l.modPaise ?? 0)) * l.qty,
-    0,
-  );
+  // Normalize every line to (net-of-tax unit price, effective rate). For
+  // EXCLUSIVE billing the unit price is untouched, so the computation below is
+  // byte-identical to the original engine. For INCLUSIVE billing we strip the
+  // embedded tax out of the price here, then run the same exclusive math — that
+  // makes the tax-exclusive total land back on the original menu price.
+  const norm = lines.map((l) => {
+    const unit = l.pricePaise + (l.modPaise ?? 0);
+    const effRate = !gstEnabled ? 0 : rateOverride ?? l.gstRate;
+    const unitNet = inclusive && effRate > 0 ? Math.round((unit * 100) / (100 + effRate)) : unit;
+    return { gross: unitNet * l.qty, effRate };
+  });
+
+  const subtotalPaise = norm.reduce((sum, l) => sum + l.gross, 0);
   const discountPaise = Math.round((subtotalPaise * discountPct) / 100);
 
   let cgstPaise = 0;
@@ -65,11 +101,13 @@ export function computeBill(lines: BillLine[], opts: BillOptions = {}): Bill {
   let igstPaise = 0;
   const taxByRate: Record<string, Paise> = {};
 
-  for (const l of lines) {
-    const gross = (l.pricePaise + (l.modPaise ?? 0)) * l.qty;
+  for (const l of norm) {
+    const gross = l.gross;
     const share = subtotalPaise > 0 ? gross / subtotalPaise : 0;
     const lineTaxable = gross - Math.round(discountPaise * share);
-    const lineTax = Math.round((lineTaxable * l.gstRate) / 100);
+    // effective rate: 0 when GST is off, the flat override when set, else the line's own rate
+    const effRate = l.effRate;
+    const lineTax = Math.round((lineTaxable * effRate) / 100);
 
     if (interState) {
       igstPaise += lineTax;
@@ -78,7 +116,7 @@ export function computeBill(lines: BillLine[], opts: BillOptions = {}): Bill {
       cgstPaise += half;
       sgstPaise += lineTax - half; // remainder to SGST → no lost paise
     }
-    const key = l.gstRate.toFixed(2);
+    const key = effRate.toFixed(2);
     taxByRate[key] = (taxByRate[key] ?? 0) + lineTax;
   }
 

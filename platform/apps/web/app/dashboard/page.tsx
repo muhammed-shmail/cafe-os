@@ -19,15 +19,15 @@ export default async function DashboardPage() {
 
   const outlet = await prisma.outlet.findUnique({
     where: { id: session.outletId },
-    select: { id: true, name: true, tenant: { select: { name: true, plan: true } } },
+    select: { id: true, name: true, gstin: true, tenant: { select: { name: true, plan: true } } },
   });
-  if (!outlet) redirect('/login');
+  if (!outlet) redirect('/api/auth/logout');
 
   const data = await getDashboardData(outlet.id);
 
   return (
     <DashboardClient
-      outlet={{ name: outlet.name, brand: outlet.tenant.name, plan: outlet.tenant.plan }}
+      outlet={{ name: outlet.name, brand: outlet.tenant.name, plan: outlet.tenant.plan, gstin: outlet.gstin }}
       staff={{ name: session.name, role: session.role }}
       data={data}
     />

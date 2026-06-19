@@ -12,6 +12,8 @@ import type {
   SettingsData,
   SectionData,
 } from '@/lib/sections';
+import type { StaffRole } from '@cafeos/db';
+import { ROLE_LABELS, ALL_ROLES } from '@/lib/rbac';
 
 /* maps a sidebar label → API section key (only those with a deep view) */
 export const SECTION_KEY: Record<string, SectionData['section'] | undefined> = {
@@ -25,12 +27,19 @@ export const SECTION_KEY: Record<string, SectionData['section'] | undefined> = {
 };
 
 /* --------------------------- loader shell --------------------------- */
-export function SectionView({ section, title }: { section: SectionData['section']; title: string }) {
+export function SectionView({ section, title }: { section: SectionData['section']; title?: string }) {
   const [state, setState] = useState<{ loading: boolean; error: string | null; payload: SectionData | null }>({
     loading: true,
     error: null,
     payload: null,
   });
+
+  const load = () => {
+    fetch(`/api/dashboard/section?s=${section}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((payload: SectionData) => setState({ loading: false, error: null, payload }))
+      .catch((e) => setState({ loading: false, error: String(e.message ?? e), payload: null }));
+  };
 
   useEffect(() => {
     let alive = true;
@@ -46,22 +55,22 @@ export function SectionView({ section, title }: { section: SectionData['section'
 
   return (
     <div className="grid gap-4">
-      <SectionHeader title={title} />
+      {title && <SectionHeader title={title} />}
       {state.loading && <Loading />}
       {state.error && <Card><Empty>Couldn’t load this section — {state.error}. Try Refresh.</Empty></Card>}
-      {state.payload && <SectionBody payload={state.payload} />}
+      {state.payload && <SectionBody payload={state.payload} refresh={load} />}
     </div>
   );
 }
 
-function SectionBody({ payload }: { payload: SectionData }) {
+function SectionBody({ payload, refresh }: { payload: SectionData; refresh: () => void }) {
   switch (payload.section) {
     case 'sales':
       return <Sales d={payload.data} />;
     case 'inventory':
       return <Inventory d={payload.data} />;
     case 'staff':
-      return <Staff d={payload.data} />;
+      return <Staff d={payload.data} refresh={refresh} />;
     case 'loyalty':
       return <Loyalty d={payload.data} />;
     case 'marketing':
@@ -217,59 +226,808 @@ function Inventory({ d }: { d: InventoryData }) {
 }
 
 /* =============================== Staff =============================== */
-function Staff({ d }: { d: StaffData }) {
-  const active = d.members.filter((m) => m.active).length;
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <Kpi label="Team members" value={String(d.members.length)} />
-      <Kpi label="Active" value={String(active)} />
-      <Kpi label="On shift now" value={String(d.attendance.filter((a) => !a.clockOut).length)} />
-      <Kpi label="Selling staff" value={String(d.sales.filter((s) => s.staffId).length)} />
+function Staff({ d, refresh }: { d: StaffData; refresh: () => void }) {
+  const [activeTab, setActiveTab] = useState<'directory' | 'shifts' | 'attendance' | 'payroll'>('directory');
+  const [modal, setModal] = useState<{
+    type: 'add' | 'edit' | 'pin' | 'pay' | 'payout' | 'shift';
+    member?: any;
+  } | null>(null);
 
-      <Card className="col-span-2 p-5">
-        <CardHead title="Team" />
-        <div className="grid gap-1.5">
-          {d.members.map((m) => (
-            <div key={m.id} className="flex items-center gap-2.5 py-2 px-2.5 rounded-lg" style={{ background: 'var(--paper-3)' }}>
-              <span className="grid place-items-center w-8 h-8 rounded-full text-sm font-bold shrink-0" style={{ background: 'var(--turmeric-l)', color: '#2A1607' }}>
-                {initials(m.name)}
-              </span>
-              <div className="flex-1 min-w-0">
-                <b className="text-sm block truncate">{m.name}</b>
-                <span className="text-xs capitalize" style={{ color: 'var(--ink-3)' }}>{m.role}{m.phone ? ` · ${m.phone}` : ''}</span>
-              </div>
-              {!m.active && <span className="pill text-[10px]" style={{ color: 'var(--ink-3)' }}>inactive</span>}
-            </div>
+  // Form states
+  const [name, setName] = useState('');
+  const [role, setRole] = useState('waiter');
+  const [phone, setPhone] = useState('');
+  const [pin, setPin] = useState('');
+  const [employeeCode, setEmployeeCode] = useState('');
+  
+  // Pay states
+  const [payType, setPayType] = useState<string>('none');
+  const [payRate, setPayRate] = useState(''); // in Rupees
+
+  // Payout states
+  const [payAmount, setPayAmount] = useState(''); // in Rupees
+  const [payMethod, setPayMethod] = useState<'cash' | 'upi' | 'bank'>('cash');
+  const [periodLabel, setPeriodLabel] = useState(d.period || new Date().toISOString().slice(0, 7));
+  const [payNote, setPayNote] = useState('');
+
+  // Shift states
+  const [shiftStaffId, setShiftStaffId] = useState('');
+  const [shiftStartsAt, setShiftStartsAt] = useState('');
+  const [shiftEndsAt, setShiftEndsAt] = useState('');
+  const [shiftRole, setShiftRole] = useState('');
+
+  // Request status
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset inputs when modal opens/changes
+  useEffect(() => {
+    setError(null);
+    setSubmitting(false);
+    if (!modal) return;
+
+    if (modal.type === 'add') {
+      setName('');
+      setRole('waiter');
+      setPhone('');
+      setPin('');
+      setEmployeeCode('');
+    } else if (modal.type === 'edit' && modal.member) {
+      setName(modal.member.name || '');
+      setRole(modal.member.role || 'waiter');
+      setPhone(modal.member.phone || '');
+      setEmployeeCode(modal.member.employeeCode || '');
+    } else if (modal.type === 'pin' && modal.member) {
+      setPin('');
+    } else if (modal.type === 'pay' && modal.member) {
+      setPayType(modal.member.payType || 'none');
+      setPayRate(modal.member.payRatePaise ? (modal.member.payRatePaise / 100).toString() : '');
+      setEmployeeCode(modal.member.employeeCode || '');
+    } else if (modal.type === 'payout' && modal.member) {
+      setPayAmount('');
+      setPayMethod('cash');
+      setPeriodLabel(d.period || new Date().toISOString().slice(0, 7));
+      setPayNote('');
+    } else if (modal.type === 'shift') {
+      setShiftStaffId(d.members.find(m => m.active)?.id || '');
+      setShiftStartsAt('');
+      setShiftEndsAt('');
+      setShiftRole('');
+    }
+  }, [modal, d.period, d.members]);
+
+  const handlePost = async (body: any) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/staff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      refresh();
+      setModal(null);
+    } catch (e: any) {
+      setError(e.message || 'Something went wrong');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const active = d.members.filter((m) => m.active).length;
+  const onShiftNow = d.attendanceToday.filter((a) => a.present).length;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* KPIs */}
+      <Kpi label="Team members" value={String(d.members.length)} />
+      <Kpi label="Active members" value={String(active)} />
+      <Kpi label="On shift now" value={String(onShiftNow)} tone={onShiftNow ? 'cardamom' : undefined} />
+      <Kpi label="Selling staff (30d)" value={String(d.sales.filter((s) => s.staffId).length)} />
+
+      {/* Tabs and Actions Row */}
+      <div className="col-span-1 md:col-span-2 lg:col-span-4 flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-line pb-2 gap-4">
+        <div className="flex gap-2 overflow-x-auto w-full sm:w-auto">
+          {(['directory', 'shifts', 'attendance', 'payroll'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setActiveTab(t)}
+              className={`px-4 py-2 border-b-2 font-medium text-sm transition-all whitespace-nowrap capitalize ${
+                activeTab === t
+                  ? 'border-turmeric text-turmeric font-semibold'
+                  : 'border-transparent text-ink-3 hover:text-ink'
+              }`}
+            >
+              {t === 'directory' ? 'Team Directory' : t === 'shifts' ? 'Shifts & Roster' : t}
+            </button>
           ))}
         </div>
-      </Card>
 
-      <Card className="col-span-2 p-5">
-        <CardHead title="Sales by staff" hint="30d" />
-        {d.sales.length === 0 ? (
-          <Empty>No attributed orders yet.</Empty>
-        ) : (
-          <Table
-            head={['Staff', 'Orders', 'Revenue']}
-            rows={d.sales.map((s) => [s.name, String(s.orders), formatINR(s.grossPaise)])}
-            alignRight={[1, 2]}
-          />
-        )}
-      </Card>
+        <div>
+          {activeTab === 'directory' && (
+            <button
+              onClick={() => setModal({ type: 'add' })}
+              className="px-4 py-2 rounded-lg bg-turmeric text-[#2A1607] font-semibold text-sm hover:brightness-110 active:scale-95 transition-all flex items-center gap-1.5"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+              </svg>
+              Add Staff Member
+            </button>
+          )}
+          {activeTab === 'shifts' && (
+            <button
+              onClick={() => setModal({ type: 'shift' })}
+              className="px-4 py-2 rounded-lg bg-turmeric text-[#2A1607] font-semibold text-sm hover:brightness-110 active:scale-95 transition-all flex items-center gap-1.5"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+              </svg>
+              Schedule Shift
+            </button>
+          )}
+        </div>
+      </div>
 
-      <Card className="col-span-2 lg:col-span-4 p-5">
-        <CardHead title="Recent attendance" hint="last 12 clock-ins" />
-        {d.attendance.length === 0 ? (
-          <Empty>No clock-ins recorded yet.</Empty>
-        ) : (
-          <Table
-            head={['Staff', 'Clock in', 'Clock out']}
-            rows={d.attendance.map((a) => [a.name, dt(a.clockIn), a.clockOut ? dt(a.clockOut) : 'on shift'])}
-          />
+      {/* Main Tab Content */}
+      <div className="col-span-1 md:col-span-2 lg:col-span-4">
+        {activeTab === 'directory' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {d.members.map((m) => (
+              <Card key={m.id} className="p-5 flex flex-col justify-between h-full min-h-[220px]">
+                <div>
+                  <div className="flex justify-between items-start gap-2 mb-3">
+                    <div className="flex items-center gap-3">
+                      <span className="grid place-items-center w-10 h-10 rounded-full text-base font-bold shrink-0" style={{ background: 'var(--turmeric-l)', color: '#2A1607' }}>
+                        {initials(m.name)}
+                      </span>
+                      <div className="min-w-0">
+                        <h4 className="font-semibold text-base truncate" title={m.name}>{m.name}</h4>
+                        <span className="text-xs px-2 py-0.5 rounded bg-paper-3 border border-line font-medium capitalize text-ink-2">
+                          {ROLE_LABELS[m.role as StaffRole] || m.role}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {!m.active && <span className="pill text-[10px] text-red-500 bg-red-500/10 border border-red-500/20">Inactive</span>}
+                      {m.active && <span className="pill text-[10px] text-green-500 bg-green-500/10 border border-green-500/20">Active</span>}
+                    </div>
+                  </div>
+
+                  <div className="text-sm space-y-1.5 mb-4 text-ink-2">
+                    {m.employeeCode && (
+                      <div className="flex justify-between">
+                        <span>Code:</span>
+                        <span className="font-semibold text-ink">{m.employeeCode}</span>
+                      </div>
+                    )}
+                    {m.phone && (
+                      <div className="flex justify-between">
+                        <span>Phone:</span>
+                        <span className="font-semibold text-ink">{m.phone}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span>POS PIN:</span>
+                      <span className="font-semibold text-ink">{m.hasPin ? '🔑 Set' : '❌ Not Set'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Pay Rate:</span>
+                      <span className="font-semibold text-ink">
+                        {m.payType === 'hourly' && m.payRatePaise ? `${formatINR(m.payRatePaise)}/hr` :
+                         m.payType === 'monthly' && m.payRatePaise ? `${formatINR(m.payRatePaise)}/mo` : 'Not configured'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mt-auto pt-3 border-t border-line">
+                  <button
+                    onClick={() => setModal({ type: 'edit', member: m })}
+                    className="px-2 py-1.5 rounded bg-paper-3 hover:bg-line text-xs font-semibold text-center transition-all"
+                  >
+                    Edit Info
+                  </button>
+                  <button
+                    onClick={() => setModal({ type: 'pin', member: m })}
+                    className="px-2 py-1.5 rounded bg-paper-3 hover:bg-line text-xs font-semibold text-center transition-all"
+                  >
+                    Reset PIN
+                  </button>
+                  <button
+                    onClick={() => setModal({ type: 'pay', member: m })}
+                    className="px-2 py-1.5 rounded bg-paper-3 hover:bg-line text-xs font-semibold text-center transition-all"
+                  >
+                    Pay Settings
+                  </button>
+                  {m.active ? (
+                    <button
+                      onClick={() => {
+                        if (confirm(`Deactivate ${m.name}?`)) {
+                          handlePost({ action: 'remove', id: m.id });
+                        }
+                      }}
+                      className="px-2 py-1.5 rounded bg-red-950/20 hover:bg-red-950/40 text-red-500 text-xs font-semibold text-center transition-all"
+                    >
+                      Deactivate
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handlePost({ action: 'update', id: m.id, active: true })}
+                      className="px-2 py-1.5 rounded bg-green-950/20 hover:bg-green-950/40 text-green-500 text-xs font-semibold text-center transition-all"
+                    >
+                      Reactivate
+                    </button>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </div>
         )}
-      </Card>
+
+        {activeTab === 'shifts' && (
+          <div className="grid gap-4">
+            <Card className="p-5">
+              <CardHead title="Upcoming shifts & schedule" hint={`${d.shifts.length} shift(s) scheduled`} />
+              {d.shifts.length === 0 ? (
+                <Empty>No scheduled shifts. Click &quot;Schedule Shift&quot; above to assign tasks.</Empty>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--line)' }}>
+                        <th className="pb-2 text-left text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Staff Name</th>
+                        <th className="pb-2 text-left text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Schedule</th>
+                        <th className="pb-2 text-left text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Role Override</th>
+                        <th className="pb-2 text-right text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {d.shifts.map((s) => (
+                        <tr key={s.id} style={{ borderBottom: '1px solid var(--line)' }}>
+                          <td className="py-3 font-semibold text-ink">{s.name}</td>
+                          <td className="py-3 text-ink-2">{formatShiftTime(s.startsAt, s.endsAt)}</td>
+                          <td className="py-3 text-ink-2 capitalize">{s.role ? (ROLE_LABELS[s.role as StaffRole] || s.role) : '—'}</td>
+                          <td className="py-3 text-right">
+                            <button
+                              onClick={() => {
+                                if (confirm(`Remove this shift for ${s.name}?`)) {
+                                  handlePost({ action: 'shift_remove', shiftId: s.id });
+                                }
+                              }}
+                              className="text-red-500 hover:text-red-400 font-semibold text-xs transition-all"
+                            >
+                              Cancel Shift
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {activeTab === 'attendance' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Left/Middle: Live Attendance Today */}
+            <Card className="col-span-1 lg:col-span-2 p-5">
+              <CardHead title="Today's Attendance punches" hint={`${d.attendanceToday.filter(a => a.present).length} currently active`} />
+              {d.attendanceToday.length === 0 ? (
+                <Empty>No check-ins today. Staff can clock-in using their PIN at the POS.</Empty>
+              ) : (
+                <div className="grid gap-2">
+                  {d.attendanceToday.map((a) => (
+                    <div key={a.staffId} className="flex items-center justify-between p-3 rounded-lg bg-paper-3 border border-line">
+                      <div className="flex items-center gap-3">
+                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${a.present ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
+                        <div>
+                          <b className="text-sm block">{a.name}</b>
+                          <span className="text-xs text-ink-3">
+                            In: {a.clockIn ? new Date(a.clockIn).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }) : '—'}
+                            {a.clockOut ? ` · Out: ${new Date(a.clockOut).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}` : ''}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-semibold font-mono">{a.minutes} min</span>
+                        <span className="block text-[10px] text-ink-3">{a.present ? 'on shift' : 'completed'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            {/* Right: Last 12 entries */}
+            <Card className="p-5">
+              <CardHead title="Recent attendance history" hint="Last 12 logs" />
+              {d.attendance.length === 0 ? (
+                <Empty>No historic attendance recorded.</Empty>
+              ) : (
+                <div className="space-y-3">
+                  {d.attendance.map((a) => (
+                    <div key={a.id} className="text-xs border-b border-line pb-2">
+                      <div className="flex justify-between font-semibold text-ink mb-1">
+                        <span>{a.name}</span>
+                        <span className={!a.clockOut ? 'text-green-500' : 'text-ink-3'}>
+                          {!a.clockOut ? 'Clocked In' : 'Completed'}
+                        </span>
+                      </div>
+                      <div className="text-ink-2 flex flex-col">
+                        <span>In: {dt(a.clockIn)}</span>
+                        {a.clockOut && <span>Out: {dt(a.clockOut)}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {activeTab === 'payroll' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Left: Payroll structure & payouts */}
+            <Card className="col-span-1 lg:col-span-2 p-5">
+              <CardHead title={`Payroll Period · ${d.period}`} hint="Active team wages" />
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--line)' }}>
+                      <th className="pb-2 text-left text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Name</th>
+                      <th className="pb-2 text-left text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Wage Plan</th>
+                      <th className="pb-2 text-right text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Paid this Period</th>
+                      <th className="pb-2 text-right text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.payroll.map((p) => {
+                      const member = d.members.find(m => m.id === p.staffId);
+                      if (!member?.active) return null;
+                      return (
+                        <tr key={p.staffId} style={{ borderBottom: '1px solid var(--line)' }}>
+                          <td className="py-3 font-semibold text-ink">{p.name}</td>
+                          <td className="py-3 text-ink-2">
+                            {p.payType === 'hourly' && p.payRatePaise ? `${formatINR(p.payRatePaise)}/hr` :
+                             p.payType === 'monthly' && p.payRatePaise ? `${formatINR(p.payRatePaise)}/mo` : 'Not configured'}
+                          </td>
+                          <td className="py-3 text-right font-mono text-ink font-semibold">
+                            {formatINR(p.paidThisPeriodPaise)}
+                          </td>
+                          <td className="py-3 text-right">
+                            <button
+                              onClick={() => setModal({ type: 'payout', member: member })}
+                              className="px-2 py-1 rounded bg-turmeric text-[#2A1607] font-bold text-xs hover:brightness-110 active:scale-95 transition-all"
+                            >
+                              Record Pay
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            {/* Right: Payment Logs */}
+            <Card className="p-5">
+              <CardHead title="Recent payroll ledger" hint="This period" />
+              {d.payroll.flatMap(p => p.recent).length === 0 ? (
+                <Empty>No salary payments recorded this period.</Empty>
+              ) : (
+                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                  {d.payroll
+                    .flatMap((p) => p.recent.map((r) => ({ ...r, staffName: p.name })))
+                    .sort((a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime())
+                    .map((pay) => (
+                      <div key={pay.id} className="text-xs border-b border-line pb-2">
+                        <div className="flex justify-between font-semibold text-ink mb-1">
+                          <span>{pay.staffName}</span>
+                          <span className="font-mono text-turmeric-d">{formatINR(pay.amountPaise)}</span>
+                        </div>
+                        <div className="text-ink-3 flex justify-between">
+                          <span>Method: <b className="capitalize">{pay.method}</b></span>
+                          <span>{new Date(pay.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+      </div>
+
+      {/* Modals */}
+      {modal && (
+        <div 
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 transition-all"
+          onClick={() => !submitting && setModal(null)}
+        >
+          <div 
+            className="bg-paper-3 border border-line rounded-xl shadow-2xl w-full max-w-md p-6 overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex justify-between items-center border-b border-line pb-3 mb-4">
+              <h3 className="font-semibold text-lg">
+                {modal.type === 'add' && 'Add New Staff Member'}
+                {modal.type === 'edit' && `Edit ${modal.member?.name}`}
+                {modal.type === 'pin' && `Reset PIN for ${modal.member?.name}`}
+                {modal.type === 'pay' && `Compensation Settings: ${modal.member?.name}`}
+                {modal.type === 'payout' && `Record Payout: ${modal.member?.name}`}
+                {modal.type === 'shift' && 'Schedule Shift'}
+              </h3>
+              <button 
+                disabled={submitting} 
+                onClick={() => setModal(null)}
+                className="text-ink-3 hover:text-ink transition-all disabled:opacity-50"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Error Message */}
+            {error && (
+              <div className="mb-4 p-3 rounded bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-semibold">
+                ⚠️ Error: {error === 'pin_in_use' ? 'PIN is already in use by another staff member' : 
+                          error === 'pin_must_be_4_to_6_digits' ? 'PIN must be between 4 and 6 digits (numbers only)' : error}
+              </div>
+            )}
+
+            {/* Modal Body / Form */}
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              if (submitting) return;
+
+              if (modal.type === 'add') {
+                if (!name.trim()) return setError('Name is required');
+                if (!/^\d{4,6}$/.test(pin)) return setError('PIN must be 4 to 6 numeric digits');
+                handlePost({ action: 'create', name, role, phone: phone || null, pin, employeeCode: employeeCode || null });
+              } else if (modal.type === 'edit') {
+                if (!name.trim()) return setError('Name is required');
+                handlePost({ action: 'update', id: modal.member.id, name, role, phone: phone || null, employeeCode: employeeCode || null });
+              } else if (modal.type === 'pin') {
+                if (!/^\d{4,6}$/.test(pin)) return setError('PIN must be 4 to 6 numeric digits');
+                handlePost({ action: 'setpin', id: modal.member.id, pin });
+              } else if (modal.type === 'pay') {
+                const parsedRate = payType === 'none' ? null : Math.round(Number(payRate) * 100);
+                if (payType !== 'none' && (isNaN(parsedRate || 0) || (parsedRate || 0) < 0)) {
+                  return setError('Pay rate must be a valid positive number');
+                }
+                handlePost({
+                  action: 'set_pay',
+                  id: modal.member.id,
+                  payType: payType === 'none' ? null : payType,
+                  payRatePaise: parsedRate,
+                  employeeCode: employeeCode || null
+                });
+              } else if (modal.type === 'payout') {
+                const parsedAmount = Math.round(Number(payAmount) * 100);
+                if (isNaN(parsedAmount) || parsedAmount <= 0) {
+                  return setError('Payout amount must be a positive number');
+                }
+                handlePost({
+                  action: 'pay_record',
+                  id: modal.member.id,
+                  amountPaise: parsedAmount,
+                  method: payMethod,
+                  periodLabel,
+                  note: payNote || null
+                });
+              } else if (modal.type === 'shift') {
+                if (!shiftStaffId) return setError('Staff member is required');
+                if (!shiftStartsAt) return setError('Start date/time is required');
+                if (!shiftEndsAt) return setError('End date/time is required');
+                if (new Date(shiftEndsAt) <= new Date(shiftStartsAt)) return setError('End time must be after start time');
+                handlePost({
+                  action: 'shift_add',
+                  staffId: shiftStaffId,
+                  startsAt: new Date(shiftStartsAt).toISOString(),
+                  endsAt: new Date(shiftEndsAt).toISOString(),
+                  role: shiftRole || null
+                });
+              }
+            }}>
+              {/* Form Fields: Add / Edit */}
+              {(modal.type === 'add' || modal.type === 'edit') && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Full Name</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={name} 
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="e.g. Rahul Sharma"
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Role</label>
+                    <select
+                      value={role}
+                      onChange={(e) => setRole(e.target.value)}
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm cursor-pointer"
+                    >
+                      {ALL_ROLES.map((r) => (
+                        <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Phone Number (Optional)</label>
+                    <input 
+                      type="tel" 
+                      value={phone} 
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="e.g. +91 9876543210"
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Employee Code (Optional)</label>
+                    <input 
+                      type="text" 
+                      value={employeeCode} 
+                      onChange={(e) => setEmployeeCode(e.target.value)}
+                      placeholder="e.g. EMP102"
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm"
+                    />
+                  </div>
+                  {modal.type === 'add' && (
+                    <div>
+                      <label className="block text-xs font-semibold mb-1 text-ink-2">Numeric POS PIN (4 to 6 digits)</label>
+                      <input 
+                        type="password" 
+                        pattern="\d*"
+                        minLength={4}
+                        maxLength={6}
+                        required
+                        value={pin} 
+                        onChange={(e) => setPin(e.target.value)}
+                        placeholder="e.g. 1478"
+                        className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm font-mono tracking-widest"
+                      />
+                      <span className="text-[10px] text-ink-3 mt-1 block">This PIN is hashed. Staff will use it to clock-in/out and log in at the POS terminal.</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Form Fields: Reset PIN */}
+              {modal.type === 'pin' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">New Numeric PIN (4 to 6 digits)</label>
+                    <input 
+                      type="password" 
+                      pattern="\d*"
+                      minLength={4}
+                      maxLength={6}
+                      required
+                      value={pin} 
+                      onChange={(e) => setPin(e.target.value)}
+                      placeholder="Enter new pin"
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm font-mono tracking-widest"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Form Fields: Pay Config */}
+              {modal.type === 'pay' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Wage Configuration</label>
+                    <select
+                      value={payType}
+                      onChange={(e) => setPayType(e.target.value)}
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm cursor-pointer"
+                    >
+                      <option value="none">No Set Rate / Unsalaried</option>
+                      <option value="hourly">Hourly Rate</option>
+                      <option value="monthly">Monthly Salary</option>
+                    </select>
+                  </div>
+                  {payType !== 'none' && (
+                    <div>
+                      <label className="block text-xs font-semibold mb-1 text-ink-2">
+                        Rate (in Rupees ₹)
+                      </label>
+                      <input 
+                        type="number" 
+                        required
+                        min="0"
+                        step="0.01"
+                        value={payRate} 
+                        onChange={(e) => setPayRate(e.target.value)}
+                        placeholder={payType === 'hourly' ? 'e.g. 150' : 'e.g. 15000'}
+                        className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm font-mono"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Employee Code (Optional)</label>
+                    <input 
+                      type="text" 
+                      value={employeeCode} 
+                      onChange={(e) => setEmployeeCode(e.target.value)}
+                      placeholder="e.g. EMP102"
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Form Fields: Record Salary Payment */}
+              {modal.type === 'payout' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Staff Member</label>
+                    <input 
+                      type="text" 
+                      disabled
+                      value={modal.member?.name || ''}
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink-3 opacity-60 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Amount Paid (Rupees ₹)</label>
+                    <input 
+                      type="number" 
+                      required
+                      min="0.01"
+                      step="0.01"
+                      value={payAmount} 
+                      onChange={(e) => setPayAmount(e.target.value)}
+                      placeholder="e.g. 5000"
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm font-mono"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold mb-1 text-ink-2">Payment Method</label>
+                      <select
+                        value={payMethod}
+                        onChange={(e) => setPayMethod(e.target.value as any)}
+                        className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm cursor-pointer"
+                      >
+                        <option value="cash">Cash</option>
+                        <option value="upi">UPI</option>
+                        <option value="bank">Bank Transfer</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1 text-ink-2">Payroll Period</label>
+                      <input 
+                        type="text" 
+                        required
+                        value={periodLabel} 
+                        onChange={(e) => setPeriodLabel(e.target.value)}
+                        placeholder="YYYY-MM"
+                        className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm font-mono"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Notes (Optional)</label>
+                    <input 
+                      type="text" 
+                      value={payNote} 
+                      onChange={(e) => setPayNote(e.target.value)}
+                      placeholder="e.g. Part-payment or Advance salary"
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Form Fields: Schedule Shift */}
+              {modal.type === 'shift' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Staff Member</label>
+                    <select
+                      value={shiftStaffId}
+                      onChange={(e) => setShiftStaffId(e.target.value)}
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm cursor-pointer"
+                    >
+                      {d.members.filter(m => m.active).map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Starts At</label>
+                    <input 
+                      type="datetime-local" 
+                      required
+                      value={shiftStartsAt} 
+                      onChange={(e) => setShiftStartsAt(e.target.value)}
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Ends At</label>
+                    <input 
+                      type="datetime-local" 
+                      required
+                      value={shiftEndsAt} 
+                      onChange={(e) => setShiftEndsAt(e.target.value)}
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-ink-2">Role Override (Optional)</label>
+                    <select
+                      value={shiftRole}
+                      onChange={(e) => setShiftRole(e.target.value)}
+                      className="w-full px-3 py-2 rounded bg-paper-3 border border-line text-ink focus:outline-none focus:border-turmeric text-sm cursor-pointer"
+                    >
+                      <option value="">Default User Role</option>
+                      {ALL_ROLES.map((r) => (
+                        <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Form Action Buttons */}
+              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-line">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => setModal(null)}
+                  className="px-4 py-2 rounded bg-paper-3 border border-line text-ink font-semibold text-sm hover:brightness-110 active:scale-95 transition-all disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-4 py-2 rounded bg-turmeric text-[#2A1607] font-semibold text-sm hover:brightness-110 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {submitting ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4 text-[#2A1607]" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Saving...
+                    </>
+                  ) : (
+                    'Save Changes'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+// shift details time formatter
+function formatShiftTime(startsAt: string, endsAt: string) {
+  const s = new Date(startsAt);
+  const e = new Date(endsAt);
+  const day = s.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+  const startTime = s.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const endTime = e.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return `${day} · ${startTime} - ${endTime}`;
 }
 
 /* ============================== Loyalty ============================== */
@@ -489,7 +1247,7 @@ function Settings({ d }: { d: SettingsData }) {
           ]}
         />
         <p className="text-xs mt-4" style={{ color: 'var(--ink-3)' }}>
-          Editing these settings is coming next — values are read-only for now.
+          Outlet name, address and timezone are read-only for now.
         </p>
       </Card>
     </div>

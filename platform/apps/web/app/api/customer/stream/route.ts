@@ -28,7 +28,8 @@ export async function GET(req: NextRequest) {
       send({ type: 'hello', table: table.label });
 
       unsub = subscribe(table.outlet.id, (e: RealtimeEvent) => {
-        if (e.ticket?.table === table.label) send(e);
+        // only order events carry a ticket; notify events are owner-only
+        if ('ticket' in e && e.ticket?.table === table.label) send(e);
       });
       ping = setInterval(() => { try { controller.enqueue(enc.encode(`: ping\n\n`)); } catch {} }, 25000);
 

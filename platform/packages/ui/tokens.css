@@ -1,8 +1,20 @@
 /* =========================================================================
    Cafe OS — design tokens ("Roasted Daylight")
    Fonts are injected by next/font as --font-display / --font-body / --font-mono.
+
+   Theming model
+   -------------
+   :root                    → light theme (default)
+   [data-theme="dark"]      → global dark theme (user toggle, persisted)
+   [data-skin="roast"]      → KDS-only dark-roast surface (independent of toggle)
+
+   All surfaces read these vars via the Tailwind preset (paper / ink / line /
+   turmeric / …) or the .btn/.card/.inp/.pill component classes in globals.css,
+   so editing a token here re-themes every screen at once.
    ========================================================================= */
 :root {
+  color-scheme: light;
+
   --paper: #F6EFE3;  --paper-2: #FBF6EC;  --paper-3: #FFFDF8;
   --ink: #271811;    --ink-2: #5B4636;    --ink-3: #9A8473;
   --line: #E4D7C3;   --line-2: #D8C7AD;
@@ -10,7 +22,22 @@
   --turmeric: #E8902A; --turmeric-d: #C9711A; --turmeric-l: #F7B65A;
   --cardamom: #4E7A4A; --cardamom-d: #3A5E37;
   --clay: #C3492F;     --clay-l: #E27A5C;
-  --berry: #8E3B6B;    --gold: #D9A93A;
+  --berry: #8E3B6B;    --gold: #C99A2E; --gold-d: #A87E1E; --gold-l: #E6C463;
+
+  /* Luxe accents — gold hairline borders + foil CTA gradient */
+  --gold-hair: rgba(176,135,40,.42);
+  --gold-grad: linear-gradient(135deg, #E6C463 0%, #C99A2E 46%, #A87E1E 100%);
+  --espresso: #2A1607;
+
+  /* Semantic state — tints sit on surfaces, "ink" variants pass AA on --paper */
+  --ok: #4E7A4A;       --ok-ink: #2E5A2B;   --ok-bg: #E8F1E4;
+  --warn: #B8791A;     --warn-ink: #8A5A12;  --warn-bg: #F7ECD6;
+  --danger: #C3492F;   --danger-ink: #9A3320; --danger-bg: #F7E2DB;
+  --info: #2F6B8E;     --info-ink: #235066;  --info-bg: #DDEDF4;
+
+  /* Interaction */
+  --ring: rgba(232,144,42,.55);     /* focus-visible ring colour */
+  --scrim: rgba(39,24,17,.46);      /* modal / sheet backdrop      */
 
   --sh-1: 0 1px 2px rgba(60,40,20,.06), 0 1px 3px rgba(60,40,20,.05);
   --sh-2: 0 4px 14px rgba(60,38,18,.10), 0 2px 6px rgba(60,38,18,.06);
@@ -18,11 +45,45 @@
   --sh-glow: 0 0 0 4px rgba(232,144,42,.16);
 }
 
-/* Dark roast skin for the KDS surface */
+/* Global dark theme (user toggle). Desaturated, lighter tonal variants —
+   not a raw inversion — so brand + contrast stay intact (WCAG AA). */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --paper: #15110D;  --paper-2: #1E1812;  --paper-3: #2A2118;
+  --ink: #F5ECDD;    --ink-2: #C9B6A0;    --ink-3: #8E7864;
+  --line: #332720;   --line-2: #463528;
+
+  --turmeric: #F2A648; --turmeric-d: #E8902A; --turmeric-l: #F8C079;
+  --cardamom: #7FB079; --cardamom-d: #5E8E58;
+  --clay: #E47A5C;     --clay-l: #EE9377;
+  --berry: #C76A9E;    --gold: #E6BE5A; --gold-d: #C9A23F; --gold-l: #F0D27E;
+
+  --gold-hair: rgba(230,196,99,.34);
+  --gold-grad: linear-gradient(135deg, #F0D27E 0%, #E6BE5A 48%, #C9A23F 100%);
+  --espresso: #2A1607;
+
+  --ok: #7FB079;       --ok-ink: #A8D0A2;   --ok-bg: #1E2C1B;
+  --warn: #E0A23E;     --warn-ink: #EFC480;  --warn-bg: #2E2412;
+  --danger: #E47A5C;   --danger-ink: #F0A893; --danger-bg: #2E1A14;
+  --info: #6FB3D6;     --info-ink: #A6D2E8;  --info-bg: #15262E;
+
+  --ring: rgba(242,166,72,.6);
+  --scrim: rgba(0,0,0,.62);
+
+  --sh-1: 0 1px 2px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.4);
+  --sh-2: 0 4px 14px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+  --sh-3: 0 16px 40px rgba(0,0,0,.6), 0 6px 14px rgba(0,0,0,.5);
+  --sh-glow: 0 0 0 4px rgba(242,166,72,.22);
+}
+
+/* Dark-roast skin for the KDS surface (independent of the global toggle) */
 [data-skin="roast"] {
+  color-scheme: dark;
   --paper: #16110D;  --paper-2: #211913;  --paper-3: #2B201A;
   --ink: #F4E9DA;    --ink-2: #C2AC97;    --ink-3: #8A7461;
   --line: #34271F;   --line-2: #43332A;
+  --scrim: rgba(0,0,0,.6);
 }
 
 * { box-sizing: border-box; }

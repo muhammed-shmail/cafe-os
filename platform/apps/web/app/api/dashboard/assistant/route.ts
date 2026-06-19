@@ -27,61 +27,106 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: 'invalid' }, { status: 400 });
 
   const data = await getDashboardData(session.outletId);
-  const reply = answer(parsed.data.q, data);
-  return NextResponse.json({ reply });
+  const { reply, lang } = answer(parsed.data.q, data);
+  // `lang` tells the client which voice (ml-IN / en-IN) to read the reply with
+  return NextResponse.json({ reply, lang });
 }
 
-function answer(qRaw: string, d: Awaited<ReturnType<typeof getDashboardData>>): string {
+type Lang = 'en' | 'ml';
+
+function answer(qRaw: string, d: Awaited<ReturnType<typeof getDashboardData>>): { reply: string; lang: Lang } {
   const q = qRaw.toLowerCase();
+  // any Malayalam codepoint in the question ⇒ answer in Malayalam
+  const lang: Lang = /[ഀ-ൿ]/.test(qRaw) ? 'ml' : 'en';
+  const r = (en: string, ml: string) => ({ reply: lang === 'ml' ? ml : en, lang });
+  // intent match: English regex OR any Malayalam keyword present in the raw text
+  const has = (en: RegExp, mlWords: string[]) => en.test(q) || mlWords.some((w) => qRaw.includes(w));
+
   const { kpi, topItems, hourly, menuQuadrant, lowStock, loyalty } = d;
   const peak = hourly.indexOf(Math.max(...hourly));
   const peakStr = Math.max(...hourly) > 0 ? `${fmtHour(peak)}–${fmtHour((peak + 1) % 24)}` : null;
 
   // sales / performance
-  if (/(sales|why|up|down|today|how.*doing|revenue)/.test(q)) {
+  if (has(/(sales|why|up|down|today|how.*doing|revenue)/, ['വിൽപ്പന', 'വില്പന', 'വരുമാനം', 'ഇന്ന്', 'എങ്ങനെ', 'കച്ചവടം'])) {
     if (kpi.todayOrders === 0)
-      return `No orders have settled today yet, so there's nothing to compare. As soon as the till rings up sales they'll show here — today's total, order count, AOV and footfall all update live.`;
-    const dir =
-      kpi.salesDeltaPct == null
-        ? 'with no prior day to compare against'
-        : kpi.salesDeltaPct >= 0
-          ? `<b>${kpi.salesDeltaPct}% ahead</b> of yesterday`
+      return r(
+        `No orders have settled today yet, so there's nothing to compare. As soon as the till rings up sales they'll show here — today's total, order count, AOV and footfall all update live.`,
+        `ഇന്ന് ഇതുവരെ ഓർഡറുകളൊന്നും സെറ്റിൽ ആയിട്ടില്ല, അതിനാൽ താരതമ്യം ചെയ്യാൻ ഒന്നുമില്ല. ടിൽ വിൽപ്പന തുടങ്ങുമ്പോൾ ഇവിടെ കാണാം — ഇന്നത്തെ ആകെ തുക, ഓർഡർ എണ്ണം, ശരാശരി ബിൽ, ഫുട്ട്ഫാൾ എല്ലാം തത്സമയം അപ്ഡേറ്റ് ആകും.`,
+      );
+    const dirEn =
+      kpi.salesDeltaPct == null ? 'with no prior day to compare against'
+        : kpi.salesDeltaPct >= 0 ? `<b>${kpi.salesDeltaPct}% ahead</b> of yesterday`
           : `<b>${Math.abs(kpi.salesDeltaPct)}% behind</b> yesterday`;
-    return `Today you've done <b>${formatINR(kpi.todaySalesPaise)}</b> across <b>${kpi.todayOrders}</b> orders (AOV ${formatINR(kpi.aovPaise)}), ${dir}.${peakStr ? ` Your strongest hour tends to be <b>${peakStr}</b>.` : ''}${topItems[0] ? ` ${topItems[0].name} is leading the mix.` : ''} <span class="msg-act">Tip: keep an upsell prompt on the hero item at the till.</span>`;
+    const dirMl =
+      kpi.salesDeltaPct == null ? 'താരതമ്യം ചെയ്യാൻ തലേന്നത്തെ ഡാറ്റ ഇല്ല'
+        : kpi.salesDeltaPct >= 0 ? `ഇന്നലെയെക്കാൾ <b>${kpi.salesDeltaPct}% മുന്നിൽ</b>`
+          : `ഇന്നലെയെക്കാൾ <b>${Math.abs(kpi.salesDeltaPct)}% പിന്നിൽ</b>`;
+    return r(
+      `Today you've done <b>${formatINR(kpi.todaySalesPaise)}</b> across <b>${kpi.todayOrders}</b> orders (AOV ${formatINR(kpi.aovPaise)}), ${dirEn}.${peakStr ? ` Your strongest hour tends to be <b>${peakStr}</b>.` : ''}${topItems[0] ? ` ${topItems[0].name} is leading the mix.` : ''} <span class="msg-act">Tip: keep an upsell prompt on the hero item at the till.</span>`,
+      `ഇന്ന് നിങ്ങൾ <b>${formatINR(kpi.todaySalesPaise)}</b> വിറ്റു, <b>${kpi.todayOrders}</b> ഓർഡറുകളിൽ (ശരാശരി ബിൽ ${formatINR(kpi.aovPaise)}), ${dirMl}.${peakStr ? ` ഏറ്റവും തിരക്കുള്ള സമയം സാധാരണ <b>${peakStr}</b> ആണ്.` : ''}${topItems[0] ? ` ${topItems[0].name} മുന്നിട്ടു നിൽക്കുന്നു.` : ''} <span class="msg-act">നുറുങ്ങ്: ടില്ലിൽ ഹീറോ ഐറ്റത്തിന് ഒരു അപ്സെൽ പ്രോംപ്റ്റ് വെക്കൂ.</span>`,
+    );
   }
 
   // what to promote
-  if (/(promote|tonight|push|feature|special)/.test(q)) {
+  if (has(/(promote|tonight|push|feature|special)/, ['പ്രമോട്ട്', 'പ്രചരിപ്പിക്ക', 'പ്രൊമോഷൻ', 'ഇന്ന് രാത്രി', 'സ്പെഷ്യൽ', 'ഓഫർ'])) {
     const puzzle = menuQuadrant.find((m) => m.quad === 'puzzle');
     const dog = menuQuadrant.find((m) => m.quad === 'dog');
     if (!puzzle && !topItems[0])
-      return `Once a few orders land I can read the menu mix and tell you exactly what to push. Right now there isn't enough sales data to rank items.`;
+      return r(
+        `Once a few orders land I can read the menu mix and tell you exactly what to push. Right now there isn't enough sales data to rank items.`,
+        `കുറച്ച് ഓർഡറുകൾ വന്നാൽ മെനു മിക്സ് വായിച്ച് എന്ത് പ്രമോട്ട് ചെയ്യണമെന്ന് കൃത്യമായി പറയാം. ഇപ്പോൾ ഐറ്റങ്ങൾ റാങ്ക് ചെയ്യാൻ മതിയായ ഡാറ്റ ഇല്ല.`,
+      );
     if (puzzle)
-      return `Feature <b>${puzzle.name}</b> — it's a <b>Puzzle</b> (high margin, low volume), so every extra sale is high-value. Put it on the PWA home${dog ? ` and pair it with <b>${dog.name}</b> to revive a slow line` : ''}.${peakStr ? ` Time the push just before your <b>${peakStr}</b> peak.` : ''} <span class="msg-act">I can draft the PWA banner + a WhatsApp blast.</span>`;
-    return `Lean on <b>${topItems[0]!.name}</b> tonight — it already has momentum, so a small "today only" nudge converts well. <span class="msg-act">I can draft the PWA banner.</span>`;
+      return r(
+        `Feature <b>${puzzle.name}</b> — it's a <b>Puzzle</b> (high margin, low volume), so every extra sale is high-value. Put it on the PWA home${dog ? ` and pair it with <b>${dog.name}</b> to revive a slow line` : ''}.${peakStr ? ` Time the push just before your <b>${peakStr}</b> peak.` : ''} <span class="msg-act">I can draft the PWA banner + a WhatsApp blast.</span>`,
+        `<b>${puzzle.name}</b> ഫീച്ചർ ചെയ്യൂ — ഇത് ഒരു <b>Puzzle</b> ആണ് (ഉയർന്ന മാർജിൻ, കുറഞ്ഞ വിൽപ്പന), അതിനാൽ ഓരോ അധിക വിൽപ്പനയും വിലപ്പെട്ടതാണ്. PWA ഹോമിൽ വെക്കൂ${dog ? `, ഒപ്പം <b>${dog.name}</b> ചേർത്ത് മന്ദഗതിയിലുള്ള ഒരു ലൈൻ ഉണർത്തൂ` : ''}.${peakStr ? ` <b>${peakStr}</b> പീക്കിന് തൊട്ടുമുമ്പ് പ്രമോട്ട് ചെയ്യൂ.` : ''} <span class="msg-act">PWA ബാനറും WhatsApp സന്ദേശവും ഞാൻ തയ്യാറാക്കാം.</span>`,
+      );
+    return r(
+      `Lean on <b>${topItems[0]!.name}</b> tonight — it already has momentum, so a small "today only" nudge converts well. <span class="msg-act">I can draft the PWA banner.</span>`,
+      `ഇന്ന് രാത്രി <b>${topItems[0]!.name}</b>-ൽ ശ്രദ്ധിക്കൂ — ഇതിന് ഇതിനകം മൊമെന്റം ഉണ്ട്, ഒരു ചെറിയ "ഇന്ന് മാത്രം" ഓഫർ നന്നായി കൺവേർട്ട് ചെയ്യും. <span class="msg-act">PWA ബാനർ ഞാൻ തയ്യാറാക്കാം.</span>`,
+    );
   }
 
   // win-back / loyalty
-  if (/(win|back|lapsed|loyal|retain|repeat|customer)/.test(q)) {
-    return `You have <b>${loyalty.customers}</b> known customers, ${loyalty.repeatPct}% of them repeat visitors, holding <b>${loyalty.pointsLiability.toLocaleString('en-IN')} points</b> in outstanding liability. A targeted WhatsApp win-back to lapsed Gold guests typically recovers ~40%. <span class="msg-act">Draft: "We miss you ☕ Here's ₹50 off — valid 7 days."</span>`;
+  if (has(/(win|back|lapsed|loyal|retain|repeat|customer)/, ['ഉപഭോക്താ', 'കസ്റ്റമർ', 'തിരികെ', 'തിരിച്ച്', 'ലോയൽറ്റി', 'വിശ്വസ്ത'])) {
+    return r(
+      `You have <b>${loyalty.customers}</b> known customers, ${loyalty.repeatPct}% of them repeat visitors, holding <b>${loyalty.pointsLiability.toLocaleString('en-IN')} points</b> in outstanding liability. A targeted WhatsApp win-back to lapsed Gold guests typically recovers ~40%. <span class="msg-act">Draft: "We miss you ☕ Here's ₹50 off — valid 7 days."</span>`,
+      `നിങ്ങൾക്ക് <b>${loyalty.customers}</b> അറിയാവുന്ന ഉപഭോക്താക്കളുണ്ട്, അവരിൽ ${loyalty.repeatPct}% ആവർത്തിച്ച് വരുന്നവർ, <b>${loyalty.pointsLiability.toLocaleString('en-IN')} പോയിന്റ്</b> ബാക്കിയുണ്ട്. ലാപ്സായ ഗോൾഡ് ഉപഭോക്താക്കൾക്ക് WhatsApp വിൻ-ബാക്ക് സാധാരണ ~40% തിരികെ കൊണ്ടുവരും. <span class="msg-act">ഡ്രാഫ്റ്റ്: "നിങ്ങളെ മിസ് ചെയ്യുന്നു ☕ ₹50 ഓഫ് — 7 ദിവസം സാധു."</span>`,
+    );
   }
 
   // inventory
-  if (/(stock|inventory|reorder|ingredient|low)/.test(q)) {
+  if (has(/(stock|inventory|reorder|ingredient|low)/, ['സ്റ്റോക്ക്', 'സാധനം', 'സാധനങ്ങൾ', 'ഇൻവെന്ററി', 'റീഓർഡർ', 'തീർന്നു'])) {
     if (lowStock.length === 0)
-      return `Inventory looks healthy — nothing is at or below its reorder level right now.`;
+      return r(
+        `Inventory looks healthy — nothing is at or below its reorder level right now.`,
+        `ഇൻവെന്ററി ആരോഗ്യകരമാണ് — ഇപ്പോൾ ഒന്നും റീഓർഡർ ലെവലിന് താഴെയല്ല.`,
+      );
     const names = lowStock.map((s) => `<b>${s.name}</b> (${s.qty})`).join(', ');
-    return `${lowStock.length} item${lowStock.length === 1 ? '' : 's'} need attention: ${names}. <span class="msg-act">I can raise a draft purchase order for these.</span>`;
+    return r(
+      `${lowStock.length} item${lowStock.length === 1 ? '' : 's'} need attention: ${names}. <span class="msg-act">I can raise a draft purchase order for these.</span>`,
+      `${lowStock.length} സാധന${lowStock.length === 1 ? 'ത്തിന്' : 'ങ്ങൾക്ക്'} ശ്രദ്ധ വേണം: ${names}. <span class="msg-act">ഇവയ്ക്ക് ഒരു ഡ്രാഫ്റ്റ് പർച്ചേസ് ഓർഡർ ഞാൻ ഉണ്ടാക്കാം.</span>`,
+    );
   }
 
   // busiest time
-  if (/(busy|peak|hour|when|time|rush|staff|roster)/.test(q)) {
-    if (!peakStr) return `Not enough order history yet to spot a reliable peak. Check back after a full day of trade.`;
-    return `Over the last 7 days your busiest window is <b>${peakStr}</b>. Schedule your strongest staff and finish prep just before it. <span class="msg-act">I can suggest a roster around that peak.</span>`;
+  if (has(/(busy|peak|hour|when|time|rush|staff|roster)/, ['തിരക്ക്', 'പീക്ക്', 'സമയം', 'എപ്പോൾ', 'റഷ്', 'സ്റ്റാഫ്'])) {
+    if (!peakStr)
+      return r(
+        `Not enough order history yet to spot a reliable peak. Check back after a full day of trade.`,
+        `വിശ്വസനീയമായ പീക്ക് കണ്ടെത്താൻ മതിയായ ഓർഡർ ചരിത്രം ഇല്ല. ഒരു ദിവസത്തെ വ്യാപാരത്തിന് ശേഷം പരിശോധിക്കൂ.`,
+      );
+    return r(
+      `Over the last 7 days your busiest window is <b>${peakStr}</b>. Schedule your strongest staff and finish prep just before it. <span class="msg-act">I can suggest a roster around that peak.</span>`,
+      `കഴിഞ്ഞ 7 ദിവസത്തിൽ നിങ്ങളുടെ ഏറ്റവും തിരക്കുള്ള സമയം <b>${peakStr}</b> ആണ്. മികച്ച സ്റ്റാഫിനെ നിയോഗിക്കൂ, അതിന് തൊട്ടുമുമ്പ് പ്രെപ് പൂർത്തിയാക്കൂ. <span class="msg-act">ആ പീക്കിന് ചുറ്റും ഒരു റോസ്റ്റർ നിർദ്ദേശിക്കാം.</span>`,
+    );
   }
 
   // fallback
-  return `Here's the snapshot: <b>${formatINR(kpi.todaySalesPaise)}</b> today across ${kpi.todayOrders} orders, AOV ${formatINR(kpi.aovPaise)}, footfall ${kpi.footfall}. Ask me about <b>sales</b>, <b>what to promote</b>, <b>win-back</b>, <b>inventory</b>, or your <b>busiest hours</b>.`;
+  return r(
+    `Here's the snapshot: <b>${formatINR(kpi.todaySalesPaise)}</b> today across ${kpi.todayOrders} orders, AOV ${formatINR(kpi.aovPaise)}, footfall ${kpi.footfall}. Ask me about <b>sales</b>, <b>what to promote</b>, <b>win-back</b>, <b>inventory</b>, or your <b>busiest hours</b>.`,
+    `ചുരുക്കം: ഇന്ന് <b>${formatINR(kpi.todaySalesPaise)}</b>, ${kpi.todayOrders} ഓർഡറുകൾ, ശരാശരി ബിൽ ${formatINR(kpi.aovPaise)}, ഫുട്ട്ഫാൾ ${kpi.footfall}. <b>വിൽപ്പന</b>, <b>എന്ത് പ്രമോട്ട് ചെയ്യണം</b>, <b>വിൻ-ബാക്ക്</b>, <b>ഇൻവെന്ററി</b>, അല്ലെങ്കിൽ <b>തിരക്കുള്ള സമയം</b> എന്നിവയെക്കുറിച്ച് ചോദിക്കൂ.`,
+  );
 }
 
 const fmtHour = (h: number) =>

@@ -46,7 +46,8 @@ export async function resolveTable(qrToken?: string | null) {
 /** The active order for a table (what the customer is waiting on), if any. */
 export async function activeOrderForTable(tableId: string) {
   return prisma.order.findFirst({
-    where: { tableId, status: { in: ['open', 'in_kitchen', 'ready', 'served'] } },
+    // includes the QR approval states so a just-placed order is visible to the guest
+    where: { tableId, status: { in: ['pending_approval', 'approved', 'open', 'in_kitchen', 'ready', 'served'] } },
     orderBy: { placedAt: 'desc' },
     include: { items: { select: { nameSnapshot: true, qty: true, station: true } }, table: { select: { label: true } } },
   });

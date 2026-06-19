@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { STAGES, STAGE_ORDER, stageOf, urgencyOf } from '@/lib/orderStatus';
+import { LogOut } from '@/components/ui';
 
 type Ticket = {
   id: string;
@@ -16,14 +19,24 @@ const STATIONS = ['all', 'kitchen', 'bar', 'dessert'] as const;
 const ACTIVE = ['open', 'in_kitchen', 'ready'];
 
 export default function KdsClient({ outletName, initial }: { outletName: string; initial: Ticket[] }) {
+  const router = useRouter();
   const [tickets, setTickets] = useState<Ticket[]>(initial);
+  // Petpooja-style "accept the order" step: a ticket reads as NEW until the
+  // line cook acknowledges it, after which it shows as Preparing. Tickets that
+  // were already past 'in_kitchen' on load are treated as accepted.
+  const [acked, setAcked] = useState<Set<string>>(
+    () => new Set(initial.filter((t) => t.status !== 'in_kitchen' && t.status !== 'open').map((t) => t.id)),
+  );
   const [station, setStation] = useState<(typeof STATIONS)[number]>('all');
-  const [now, setNow] = useState(() => Date.now());
+  // null until mounted, so SSR and the first client render agree (no live clock
+  // during hydration → no "Text content did not match" mismatch)
+  const [now, setNow] = useState<number | null>(null);
   const [connected, setConnected] = useState(false);
   const liveRef = useRef<HTMLSpanElement>(null);
 
-  // 1s clock for the escalating timers
+  // 1s clock for the escalating timers — starts only after mount
   useEffect(() => {
+    setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
@@ -50,12 +63,29 @@ export default function KdsClient({ outletName, initial }: { outletName: string;
     return () => es.close();
   }, []);
 
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    router.replace('/login');
+    router.refresh();
+  }
+
   async function bump(id: string) {
-    // optimistic: advance/clear locally, server confirms via SSE
+    const t = tickets.find((x) => x.id === id);
+    if (!t) return;
+    const stage = stageOf(t.status, acked.has(id));
+
+    // Stage 1 — NEW → Preparing is just an on-screen acknowledgement; the order
+    // is already 'in_kitchen' on the server, so no round-trip is needed.
+    if (stage === 'new') {
+      setAcked((prev) => new Set(prev).add(id));
+      return;
+    }
+
+    // Stage 2+ — advance the persisted lifecycle. Optimistic; SSE confirms.
     setTickets((prev) =>
       prev
-        .map((t) => (t.id === id ? { ...t, status: t.status === 'in_kitchen' ? 'ready' : 'served' } : t))
-        .filter((t) => ACTIVE.includes(t.status)),
+        .map((x) => (x.id === id ? { ...x, status: x.status === 'in_kitchen' ? 'ready' : 'served' } : x))
+        .filter((x) => ACTIVE.includes(x.status)),
     );
     await fetch(`/api/orders/${id}/status`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {});
   }
@@ -67,8 +97,9 @@ export default function KdsClient({ outletName, initial }: { outletName: string;
 
   const stats = useMemo(() => ({
     open: tickets.length,
-    fresh: tickets.filter((t) => t.status === 'in_kitchen' && now - t.placedAt < 120000).length,
-  }), [tickets, now]);
+    new: tickets.filter((t) => stageOf(t.status, acked.has(t.id)) === 'new').length,
+    ready: tickets.filter((t) => t.status === 'ready').length,
+  }), [tickets, acked]);
 
   return (
     <div data-skin="roast" className="kds-root">
@@ -77,18 +108,34 @@ export default function KdsClient({ outletName, initial }: { outletName: string;
           <span ref={liveRef} className="kds-live" />
           Kitchen Display <em>· {outletName}</em>
         </div>
-        <div className="kds-filter">
+        <div className="kds-filter" role="tablist" aria-label="Station filter">
           {STATIONS.map((s) => (
-            <button key={s} className={s === station ? 'on' : ''} onClick={() => setStation(s)}>
-              {s[0].toUpperCase() + s.slice(1)}
+            <button key={s} role="tab" aria-selected={s === station} className={s === station ? 'on' : ''} onClick={() => setStation(s)}>
+              {s.charAt(0).toUpperCase() + s.slice(1)}
             </button>
           ))}
         </div>
         <div className="kds-stats">
           <span className="kstat"><b>{stats.open}</b> open</span>
-          <span className="kstat"><b>{stats.fresh}</b> fresh</span>
+          <span className="kstat" style={{ color: STAGES.new.color }}><b style={{ color: STAGES.new.color }}>{stats.new}</b> new</span>
+          <span className="kstat" style={{ color: STAGES.ready.color }}><b style={{ color: STAGES.ready.color }}>{stats.ready}</b> ready</span>
           <span className="kstat conn" style={{ color: connected ? 'var(--ok)' : 'var(--clay)' }}>{connected ? '● live' : '○ reconnecting'}</span>
+          <button className="kds-logout" onClick={logout} title="Log out"><LogOut size={14} aria-hidden style={{ verticalAlign: '-2px', marginRight: 4 }} /> Log out</button>
         </div>
+      </div>
+
+      {/* colour-coded status legend (Petpooja-style key) */}
+      <div className="kds-legend">
+        {STAGE_ORDER.map((s) => (
+          <span key={s} className="kleg">
+            <span className="kleg-dot" style={{ background: STAGES[s].color }} />
+            {STAGES[s].label}
+          </span>
+        ))}
+        <span className="kleg kleg-sep">
+          <span className="kleg-dot" style={{ background: 'var(--clay)' }} />
+          Ageing &gt; 5 min
+        </span>
       </div>
 
       {visible.length === 0 ? (
@@ -99,11 +146,21 @@ export default function KdsClient({ outletName, initial }: { outletName: string;
       ) : (
         <div className="kds-grid">
           {visible.map((t) => {
-            const secs = Math.floor((now - t.placedAt) / 1000);
-            const lvl = secs > 300 ? 'late' : secs > 120 ? 'warn' : 'fresh';
+            // before mount `now` is null → age 0, so server & first client render match
+            const age = now === null ? 0 : now - t.placedAt;
+            const secs = Math.floor(age / 1000);
+            const stage = stageOf(t.status, acked.has(t.id));
+            const st = STAGES[stage];
+            // age escalates the timer/border only while the food is still being made
+            const lvl = stage === 'ready' ? 'fresh' : urgencyOf(age);
             const lines = station === 'all' ? t.items : t.items.filter((i) => i.station === station);
             return (
-              <button key={t.id} className={`ticket ${lvl} ${t.status}`} onClick={() => bump(t.id)}>
+              <button
+                key={t.id}
+                className={`ticket ${lvl} stage-${stage}`}
+                onClick={() => bump(t.id)}
+                style={{ borderTopColor: st.color }}
+              >
                 <div className="ticket-top">
                   <span className="ticket-no">#{t.number}</span>
                   <span className="ticket-tbl">{t.type === 'takeaway' ? '🥡 Takeaway' : 'Table ' + t.table}</span>
@@ -120,8 +177,11 @@ export default function KdsClient({ outletName, initial }: { outletName: string;
                   ))}
                 </div>
                 <div className="ticket-foot">
-                  <span className={`ti-status ${t.status}`}>{t.status === 'ready' ? 'Ready' : 'Preparing'}</span>
-                  <span className="ti-bump">{t.status === 'ready' ? 'Serve ✓' : 'Bump →'}</span>
+                  <span className="ti-status" style={{ background: st.bg, color: st.color }}>
+                    <span className="ti-dot" style={{ background: st.color }} />
+                    {st.label}
+                  </span>
+                  <span className="ti-bump" style={{ color: st.color }}>{st.action}</span>
                 </div>
               </button>
             );
@@ -154,13 +214,22 @@ const kdsCss = `
 .kstat { font-size: 13px; color: var(--ink-3); font-weight: 600; }
 .kstat b { font-family: var(--font-display); font-size: 20px; color: var(--ink); margin-right: 3px; }
 .kstat.conn { font-size: 12px; font-weight: 800; }
+.kds-logout { font-family: var(--font-body); font-size: 12px; font-weight: 800; color: var(--ink-2); background: var(--paper-2); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; cursor: pointer; transition: background .12s; }
+.kds-logout:hover { background: var(--paper-3); color: var(--clay); }
+.kds-legend { display: flex; align-items: center; gap: 18px; margin: -6px 0 16px; padding: 9px 14px; background: var(--paper-2); border: 1px solid var(--line); border-radius: 12px; flex-wrap: wrap; }
+.kleg { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.kleg-dot { width: 10px; height: 10px; border-radius: 99px; }
+.kleg-sep { margin-left: auto; color: var(--ink-3); }
 .kds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 14px; align-content: start; }
-.ticket { text-align: left; background: var(--paper-2); border: 1px solid var(--line); border-top: 4px solid #56d364; border-radius: 14px; overflow: hidden; box-shadow: var(--sh-2); cursor: pointer; font-family: var(--font-body); animation: tin .3s ease both; transition: transform .12s; }
+.ticket { text-align: left; background: var(--paper-2); border: 1px solid var(--line); border-top: 4px solid #56d364; border-radius: 14px; overflow: hidden; box-shadow: var(--sh-2); cursor: pointer; font-family: var(--font-body); animation: tin .3s ease both; transition: transform .12s, box-shadow .2s; }
 .ticket:hover { transform: translateY(-3px); }
 @keyframes tin { from { opacity: 0; transform: translateY(12px); } }
-.ticket.warn { border-top-color: var(--turmeric); }
-.ticket.late { border-top-color: var(--clay); }
-.ticket.ready { border-top-color: var(--cardamom); opacity: .92; }
+/* NEW tickets pulse for attention until the kitchen accepts them */
+.ticket.stage-new { animation: tin .3s ease both, newpulse 1.8s ease-in-out infinite; }
+@keyframes newpulse { 0%,100% { box-shadow: var(--sh-2); } 50% { box-shadow: 0 0 0 3px rgba(59,130,246,.35), var(--sh-2); } }
+.ticket.stage-served { opacity: .9; }
+/* ageing cue — a red glow when a ticket is sitting too long (stage colour still owns the border) */
+.ticket.late:not(.stage-ready):not(.stage-served) { box-shadow: 0 0 0 2px rgba(195,73,47,.4), var(--sh-2); }
 .ticket-top { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px dashed var(--line-2); }
 .ticket-no { font-family: var(--font-display); font-weight: 800; font-size: 20px; }
 .ticket-tbl { font-size: 12px; font-weight: 700; color: var(--ink-2); }
@@ -177,10 +246,9 @@ const kdsCss = `
 .ti-stn.dessert { background: rgba(142,59,107,.22); color: #d488b4; }
 .ti-mod { width: 100%; font-size: 11.5px; color: var(--ink-3); padding-left: 24px; font-style: italic; }
 .ticket-foot { display: flex; justify-content: space-between; align-items: center; padding: 11px 14px; background: var(--paper-3); border-top: 1px solid var(--line); }
-.ti-status { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 4px 10px; border-radius: 99px; }
-.ti-status.in_kitchen { background: rgba(217,138,43,.18); color: var(--turmeric-l); }
-.ti-status.ready { background: rgba(86,211,100,.16); color: #6ee07c; }
-.ti-bump { font-weight: 800; font-size: 13px; color: var(--turmeric); }
+.ti-status { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 4px 10px; border-radius: 99px; }
+.ti-dot { width: 7px; height: 7px; border-radius: 99px; }
+.ti-bump { font-weight: 800; font-size: 13px; }
 .kds-hint { margin: 80px auto; max-width: 460px; text-align: center; color: var(--ink-3); font-size: 14.5px; line-height: 1.6; }
 .kds-hint b { color: var(--turmeric); }
 `;

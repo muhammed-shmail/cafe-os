@@ -46,11 +46,20 @@ enum OrderType {
 
 enum OrderStatus {
   open
+  pending_approval // QR order awaiting waiter confirmation (Phase C)
+  approved         // waiter confirmed, about to enter the kitchen
   in_kitchen
   ready
   served
   settled
   cancelled
+}
+
+// where an order originated — POS till, customer QR, or online channel
+enum OrderChannel {
+  pos
+  qr
+  online
 }
 
 enum KotStatus {
@@ -87,6 +96,18 @@ enum Tier {
   silver
   gold
   vip
+}
+
+enum CustomerStatus {
+  active
+  inactive
+  blocked
+}
+
+enum CustomerSource {
+  pwa
+  manual
+  import
 }
 
 enum LedgerType {
@@ -169,8 +190,10 @@ model Outlet {
   stockLedger  StockLedger[]
   wasteLogs    WasteLog[]
   purchaseOrders PurchaseOrder[]
+  supplierPayments SupplierPayment[]
   attendance   Attendance[]
   shifts       Shift[]
+  salaryPayments SalaryPayment[]
   auditLogs    AuditLog[]
   loyaltyLedger LoyaltyLedger[]
   gameSessions GameSession[]
@@ -178,6 +201,7 @@ model Outlet {
   leaderboards Leaderboard[]
   dailyRollups DailySalesRollup[]
   itemRollups  ItemSalesRollup[]
+  notifications Notification[]
 
   @@index([tenantId])
   @@map("outlets")
@@ -194,16 +218,38 @@ model StaffUser {
   role        StaffRole
   permissions Json       @default("[]")
   active      Boolean    @default(true)
+  employeeCode String?   // human-facing employee ID / badge
+  payType     String?    // "monthly" | "hourly"
+  payRatePaise Int?       // monthly salary or hourly rate, in paise
   createdAt   DateTime   @default(now()) @db.Timestamptz(6)
 
   tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   orders   Order[]
   attendance Attendance[]
   shifts   Shift[]
+  salaryPayments SalaryPayment[]
   audits   AuditLog[]   @relation("ActorAudits")
 
   @@index([tenantId, outletId])
   @@map("staff_users")
+}
+
+model SalaryPayment {
+  id          String   @id @default(uuid()) @db.Uuid
+  outletId    String   @db.Uuid
+  staffId     String   @db.Uuid
+  periodLabel String   // e.g. "2026-06"
+  amountPaise Int
+  method      String   // cash|upi|bank
+  note        String?
+  paidAt      DateTime @default(now()) @db.Timestamptz(6)
+  createdById String?  @db.Uuid
+
+  outlet Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  staff  StaffUser @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([outletId, staffId])
+  @@map("salary_payments")
 }
 
 model Role {
@@ -335,6 +381,11 @@ model Order {
   staffId           String?     @db.Uuid
   type              OrderType
   status            OrderStatus @default(open)
+  // Phase C — channel + waiter approval trail. Existing POS orders default to
+  // `pos` and skip approval entirely, preserving current behaviour.
+  channel           OrderChannel @default(pos)
+  approvedById      String?     @db.Uuid
+  approvedAt        DateTime?   @db.Timestamptz(6)
   subtotalPaise     Int         @default(0)
   discountPaise     Int         @default(0)
   cgstPaise         Int         @default(0)
@@ -457,6 +508,9 @@ model Recipe {
   itemId      String    @db.Uuid
   stockItemId String    @db.Uuid
   qty         Decimal   @db.Decimal(12, 3)
+  // unit the recipe quantity is authored in (e.g. "ml" while stock is tracked in
+  // "l"). NULL ⇒ same unit as the stock item — keeps every existing recipe valid.
+  unit        String?
   item        MenuItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
   stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
 
@@ -502,9 +556,17 @@ model Vendor {
   contact     Json?
   rating      Decimal? @db.Decimal(2, 1)
   leadTimeDays Int?
+  // Phase B — supplier credit
+  phone       String?
+  email       String?
+  gstin       String?
+  // outstanding carried over when the supplier was onboarded (paise)
+  openingBalancePaise Int @default(0)
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   purchaseOrders PurchaseOrder[]
+  payments    SupplierPayment[]
 
+  @@index([tenantId])
   @@map("vendors")
 }
 
@@ -514,14 +576,49 @@ model PurchaseOrder {
   vendorId   String   @db.Uuid
   status     PoStatus @default(draft)
   totalPaise Int      @default(0)
+  // Phase B — invoice + credit tracking. paidPaise reflects payments allocated
+  // directly to this invoice; account-level payments are tracked at vendor level.
+  paidPaise   Int      @default(0)
+  invoiceNo   String?
+  invoiceDate DateTime? @db.Date
+  dueDate     DateTime? @db.Date
+  notes       String?
   expectedAt DateTime? @db.Date
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
 
-  outlet Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
-  vendor Vendor @relation(fields: [vendorId], references: [id])
-  items  PurchaseOrderItem[]
+  outlet   Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  vendor   Vendor @relation(fields: [vendorId], references: [id])
+  items    PurchaseOrderItem[]
+  payments SupplierPayment[]
 
+  @@index([outletId, createdAt])
+  @@index([vendorId])
   @@map("purchase_orders")
+}
+
+// Phase B — supplier payments (append-only). A payment may target a specific
+// invoice (poId set) or be an on-account payment (poId null). Vendor balance =
+// openingBalance + Σ(non-cancelled PO totals) − Σ(payments).
+model SupplierPayment {
+  id          String   @id @default(uuid()) @db.Uuid
+  outletId    String   @db.Uuid
+  vendorId    String   @db.Uuid
+  poId        String?  @db.Uuid
+  amountPaise Int
+  method      String   // cash | upi | card | bank | cheque
+  reference   String?  // txn id / cheque no
+  note        String?
+  paidAt      DateTime @default(now()) @db.Timestamptz(6)
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  outlet Outlet         @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  vendor Vendor         @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  po     PurchaseOrder? @relation(fields: [poId], references: [id])
+
+  @@index([vendorId, paidAt])
+  @@index([outletId, paidAt])
+  @@map("supplier_payments")
 }
 
 model PurchaseOrderItem {
@@ -589,6 +686,12 @@ model Customer {
   phone              String?
   phoneHash          String?  // lookups without exposing PII
   name               String?
+  email              String?
+  gender             String?  // free-form: male|female|other (optional)
+  address            String?
+  notes              String?  // internal staff notes
+  status             CustomerStatus @default(active)
+  source             CustomerSource @default(manual) // how the profile was created
   birthday           DateTime? @db.Date
   anniversary        DateTime? @db.Date
   tier               Tier     @default(bronze)
@@ -596,6 +699,7 @@ model Customer {
   coins              Int      @default(0)
   lifetimeSpendPaise Int      @default(0)
   visitCount         Int      @default(0)
+  firstVisit         DateTime? @db.Timestamptz(6)
   lastVisit          DateTime? @db.Timestamptz(6)
   referralCode       String?  @unique
   referredBy         String?  @db.Uuid
@@ -616,6 +720,7 @@ model Customer {
   campaignSends CampaignSend[]
 
   @@index([tenantId])
+  @@index([tenantId, status])
   @@index([phoneHash])
   @@index([referralCode])
   @@map("customers")
@@ -872,4 +977,27 @@ model ItemSalesRollup {
 
   @@id([outletId, day, itemId])
   @@map("item_sales_rollup")
+}
+
+// ===================== 10. Notifications & Alerts =====================
+// Append-only operational alerts surfaced on the owner dashboard. Phase A emits
+// `low_stock`; later phases reuse this for occupancy/discount/cancellation alerts.
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  outletId  String    @db.Uuid
+  type      String    // low_stock | out_of_stock | ...
+  severity  String    @default("info") // info | warn | critical
+  title     String
+  body      String?
+  entity    String?   // e.g. "stock_item"
+  entityId  String?   @db.Uuid
+  meta      Json?
+  readAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+
+  outlet Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  @@index([outletId, createdAt])
+  @@index([outletId, type, entityId, readAt])
+  @@map("notifications")
 }

@@ -1,22 +1,55 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { WHEEL } from '@/lib/wheel';
+import { useCallback, useEffect, useState } from 'react';
+import { GamesHub } from '@/components/games/GamesHub';
+import { BrandMark } from '@/components/BrandMark';
+import { Coffee, ShoppingCart, Gamepad2, Gift, Plus, Minus, AlphaTag, type LucideIcon } from '@/components/ui';
+
+const NAV: { key: 'home' | 'order' | 'play' | 'rewards'; icon: LucideIcon; label: string }[] = [
+  { key: 'home', icon: Coffee, label: 'Home' },
+  { key: 'order', icon: ShoppingCart, label: 'Order' },
+  { key: 'play', icon: Gamepad2, label: 'Play' },
+  { key: 'rewards', icon: Gift, label: 'Rewards' },
+];
 
 type OrderDto = { id: string; number: number; status: string; type: string; table: string; placedAt: number; items: { name: string; qty: number; station: string | null }[] };
-type CustomerDto = { name: string; tier: string; points: number; coins: number; visits: number; referral: string | null };
+type CustomerDto = { name: string; tier: string; points: number; coins: number; visits: number; referral: string | null; registered?: boolean };
 type RewardDto = { id: string; name: string; type: string; cost: number };
-type Ctx = { outlet: { name: string }; table: { label: string; token: string }; order: OrderDto | null; customer: CustomerDto | null; rewards: RewardDto[]; spinsLeft: number };
+type MenuItemDto = { id: string; name: string; pricePaise: number; tags: string[] };
+type MenuCatDto = { id: string; name: string; items: MenuItemDto[] };
+type PwaFeatured = { id: string; name: string; pricePaise: number; imageUrl: string | null; label: string | null };
+type PwaBanner = { id: string; imageUrl: string; title: string; link: string | null };
+type WalletBlock = { enabled: boolean; points: number; balancePaise: number; redeemablePaise: number; pointsPerRupee: number; minPointsToRedeem: number; maxRedeemPctOfBill: number };
+type LoyaltyBlock = { orders: number; spendPaise: number; points: number; gamesPlayed: number; rewardsWon: number; tier: string; tierName: string; nextTierName: string | null; nextAtSpendPaise: number | null };
+type PwaBlock = {
+  registration: { enabled: boolean; collectName: boolean };
+  theme: { accent: string | null; logoUrl: string | null; heroTagline: string };
+  home: { sections: string[] };
+  welcome: string;
+  manualPick: boolean;
+  featured: PwaFeatured[];
+  banners: PwaBanner[];
+  gameUnlock?: { unlocked: boolean; minOrderPaise: number; orderTotalPaise: number };
+  wallet?: WalletBlock;
+  loyalty?: LoyaltyBlock;
+};
+type Ctx = { outlet: { name: string }; table: { label: string; token: string }; order: OrderDto | null; customer: CustomerDto | null; rewards: RewardDto[]; menu: MenuCatDto[]; spinsLeft: number; pwa?: PwaBlock };
 
-const STAGES: [string, string][] = [['in_kitchen', 'In the kitchen'], ['ready', 'Ready to serve'], ['served', 'Enjoy!']];
+const FEAT_LABEL: Record<string, string> = { best_seller: 'Best Seller', chef_special: 'Chef Special', new_arrival: 'New Arrival', trending: 'Trending' };
+
+// QR order lifecycle as the guest sees it (approval-gated front step)
+const STAGES: [string, string][] = [['pending_approval', 'Confirming'], ['in_kitchen', 'In the kitchen'], ['ready', 'Ready to serve'], ['served', 'Enjoy!']];
+const STAGE_IDX: Record<string, number> = { pending_approval: 0, approved: 1, open: 1, in_kitchen: 1, ready: 2, served: 3 };
 const REW_EMOJI: Record<string, string> = { free_item: '☕', cashback: '💸', bogo: '🥐', topping: '🥛' };
+const rupee = (paise: number) => `₹${(paise / 100).toLocaleString('en-IN')}`;
 
 export default function PwaClient({ qrToken }: { qrToken: string | null }) {
   const [ctx, setCtx] = useState<Ctx | null>(null);
-  const [tab, setTab] = useState<'home' | 'play' | 'rewards'>('home');
+  const [tab, setTab] = useState<'home' | 'order' | 'play' | 'rewards'>('home');
   const [now, setNow] = useState(() => Date.now());
   const [toast, setToast] = useState<{ msg: string; emoji?: string } | null>(null);
   const [confetti, setConfetti] = useState(0);
+  const [cart, setCart] = useState<Record<string, number>>({}); // itemId -> qty
 
   const qs = qrToken ? `?t=${encodeURIComponent(qrToken)}` : '';
 
@@ -33,7 +66,7 @@ export default function PwaClient({ qrToken }: { qrToken: string | null }) {
     const es = new EventSource(`/api/customer/stream${qs}`);
     es.onmessage = (e) => {
       const msg = JSON.parse(e.data);
-      if (msg.type === 'order.new' || msg.type === 'order.updated') {
+      if (msg.type === 'order.new' || msg.type === 'order.updated' || msg.type === 'order.pending') {
         setCtx((c) => (c ? { ...c, order: { ...(c.order ?? {}), ...msg.ticket } as OrderDto } : c));
       }
     };
@@ -43,132 +76,298 @@ export default function PwaClient({ qrToken }: { qrToken: string | null }) {
   function flash(msg: string, emoji?: string) { setToast({ msg, emoji }); setTimeout(() => setToast(null), 2600); }
   function pop() { setConfetti((n) => n + 1); }
 
-  if (!ctx) return <Shell><div className="grid place-items-center h-full text-ink-3">Loading your table…</div></Shell>;
+  if (!ctx) return (
+    <Shell>
+      <div className="pwa-load">
+        <BrandMark size={184} />
+        <AlphaTag />
+        <p className="pwa-load-cap">Brewing your table…</p>
+        <span className="pwa-load-steam" aria-hidden="true"><i /><i /><i /></span>
+      </div>
+      <style>{loadCss}</style>
+    </Shell>
+  );
+
+  // Registration gate — only when the owner requires it and this device isn't
+  // recognised yet. When disabled, this never shows (current behaviour).
+  if (ctx.pwa?.registration.enabled && !ctx.customer?.registered) {
+    return (
+      <Shell>
+        <Register cfg={ctx.pwa.registration} outlet={ctx.outlet.name} welcome={ctx.pwa.welcome} qrToken={qrToken} onDone={load} />
+        <style>{css}</style>
+      </Shell>
+    );
+  }
 
   return (
     <Shell>
       <div className="pwa-screen">
         <div className="pwa-scroll">
-          {tab === 'home' && <Home ctx={ctx} now={now} go={setTab} onUpsell={() => flash('Brownie added to your order!', '🍫')} />}
-          {tab === 'play' && <Play ctx={ctx} qs={qs} onResult={(m, e) => { flash(m, e); pop(); }} reload={load} />}
+          {tab === 'home' && <Home ctx={ctx} now={now} go={setTab} onUpsell={() => setTab('order')} onPick={(id) => { setCart((c) => ({ ...c, [id]: (c[id] ?? 0) + 1 })); setTab('order'); }} />}
+          {tab === 'order' && <Order ctx={ctx} qs={qs} cart={cart} setCart={setCart} reload={load} onPlaced={() => { flash('Order sent to waiter for confirmation', '⏳'); setTab('home'); }} />}
+          {tab === 'play' && <GamesHub ctx={ctx} qs={qs} onResult={(m, e) => { flash(m, e); pop(); }} reload={load} />}
           {tab === 'rewards' && <Rewards ctx={ctx} qs={qs} onRedeem={(m) => { flash(m, '🎁'); pop(); }} reload={load} />}
         </div>
-        <nav className="pwa-nav">
-          {([['home', '⌂', 'Home'], ['play', '◉', 'Play'], ['rewards', '★', 'Rewards']] as const).map(([k, i, l]) => (
-            <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}><span>{i}</span>{l}</button>
-          ))}
+        <nav className="pwa-nav" aria-label="Primary">
+          {NAV.map(({ key: k, icon: Ic, label: l }) => {
+            const count = k === 'order' ? Object.values(cart).reduce((a, b) => a + b, 0) : 0;
+            const on = tab === k;
+            return (
+              <button key={k} className={on ? 'on' : ''} onClick={() => setTab(k)} aria-current={on ? 'page' : undefined} aria-label={count > 0 ? `${l}, ${count} in cart` : l}>
+                <span><Ic size={20} aria-hidden /></span>{l}
+                {count > 0 && <i className="nav-badge">{count}</i>}
+              </button>
+            );
+          })}
         </nav>
       </div>
 
-      {toast && <div className="pwa-toast">{toast.emoji && <span>{toast.emoji}</span>}{toast.msg}</div>}
+      {toast && <div className="pwa-toast" role="status" aria-live="polite">{toast.emoji && <span aria-hidden>{toast.emoji}</span>}{toast.msg}</div>}
       {confetti > 0 && <Confetti key={confetti} />}
       <style>{css}</style>
     </Shell>
   );
 }
 
-/* ---------------- Home (live track + loyalty) ---------------- */
-function Home({ ctx, now, go, onUpsell }: { ctx: Ctx; now: number; go: (t: 'play' | 'rewards') => void; onUpsell: () => void }) {
+/* ---------------- Home (live track + loyalty + featured + banners) ---------------- */
+function Home({ ctx, now, go, onUpsell, onPick }: { ctx: Ctx; now: number; go: (t: 'order' | 'play' | 'rewards') => void; onUpsell: () => void; onPick: (id: string) => void }) {
   const o = ctx.order;
-  const curIdx = o ? Math.max(0, STAGES.findIndex((s) => s[0] === o.status)) : -1;
+  const pending = o?.status === 'pending_approval';
+  const curIdx = o ? (STAGE_IDX[o.status] ?? 0) : -1;
   const totalQty = o?.items.reduce((a, i) => a + i.qty, 0) ?? 0;
   const etaMin = Math.max(4, Math.min(12, Math.round(totalQty * 1.6) + 3));
   const elapsedMin = o ? Math.floor((now - o.placedAt) / 60000) : 0;
   const eta = Math.max(0, etaMin - elapsedMin);
-  const pct = o ? ({ open: 12, in_kitchen: 55, ready: 90, served: 100 }[o.status] ?? 12) : 0;
+  const pct = o ? ({ pending_approval: 8, approved: 32, open: 32, in_kitchen: 58, ready: 90, served: 100 }[o.status] ?? 8) : 0;
   const c = ctx.customer;
+  const pwa = ctx.pwa;
+
+  const trackBlock = o && o.status === 'cancelled' ? (
+    <section className="track empty"><div className="et-glyph">🚫</div><p>Order #{o.number} was not confirmed</p><span>Please check with a waiter or place a new order.</span></section>
+  ) : o && o.status !== 'served' ? (
+    <section className="track">
+      <div className="track-head"><span>Your order · #{o.number}</span><span className="track-eta">{pending ? '⏳ Awaiting confirmation' : o.status === 'ready' ? 'Ready now!' : `~${eta} min`}</span></div>
+      <div className="track-bar"><i style={{ width: pct + '%' }} /></div>
+      <div className="track-steps">
+        {STAGES.map((s, i) => (
+          <div key={s[0]} className={`ts ${i <= curIdx ? 'done' : ''} ${i === curIdx ? 'cur' : ''}`}><span className="ts-dot" /><em>{s[1]}</em></div>
+        ))}
+      </div>
+      <div className="track-items">{o.items.map((it, i) => <span key={i}>{it.qty}× {it.name}</span>)}</div>
+      <button className="track-cta" onClick={() => go('play')}>⏳ Got {eta} min? <b>Play &amp; earn →</b></button>
+    </section>
+  ) : o && o.status === 'served' ? (
+    <section className="track served"><div className="et-glyph">✅</div><p>Order #{o.number} served — enjoy!</p></section>
+  ) : (
+    <section className="track empty"><div className="et-glyph">📲</div><p>No live order yet.</p><span>Tap <b>Order</b> below to browse the menu and send your order to the table.</span><button className="track-cta" style={{ marginTop: 10 }} onClick={() => go('order')}>🛒 Start your order →</button></section>
+  );
+
+  const loyaltyBlock = c ? (
+    <section className="loyalty-snap">
+      <div className="ls points"><span className="ls-n">{c.points.toLocaleString('en-IN')}</span><span className="ls-l">Points</span></div>
+      <div className="ls coins"><span className="ls-n">{c.coins}</span><span className="ls-l">Coins 🪙</span></div>
+      <div className="ls visits"><span className="ls-n">{c.visits}</span><span className="ls-l">Visits</span></div>
+    </section>
+  ) : null;
+
+  const bannersBlock = pwa && pwa.banners.length ? <Banners list={pwa.banners} /> : null;
+  const featuredBlock = pwa && pwa.featured.length ? <Featured list={pwa.featured} onPick={onPick} /> : null;
+
+  // honor the owner's Home Layout ordering for the reorderable sections
+  const order = pwa?.home.sections ?? ['banners', 'track', 'featured', 'loyalty'];
+  const blockFor = (s: string) => (s === 'banners' ? bannersBlock : s === 'featured' ? featuredBlock : s === 'track' ? trackBlock : s === 'loyalty' ? loyaltyBlock : null);
 
   return (
     <>
+      {pwa?.manualPick && <TablePicker token={ctx.table.token} />}
       <header className="pwa-top">
-        <div><span className="pwa-hi">Hi {c?.name ?? 'there'} 👋</span><span className="pwa-loc">{ctx.outlet.name} · {ctx.table.label}</span></div>
+        <div><span className="pwa-hi">Hi {c?.name ?? 'there'} 👋</span><span className="pwa-loc">{pwa?.welcome ?? `${ctx.outlet.name} · ${ctx.table.label}`}</span></div>
         {c && <span className="tier-ring"><b>{c.tier[0]?.toUpperCase()}</b></span>}
       </header>
+      {pwa?.theme.heroTagline ? <p className="pwa-tag">{pwa.theme.heroTagline}</p> : null}
 
-      {o && o.status !== 'served' ? (
-        <section className="track">
-          <div className="track-head"><span>Your order · #{o.number}</span><span className="track-eta">{o.status === 'ready' ? 'Ready now!' : `~${eta} min`}</span></div>
-          <div className="track-bar"><i style={{ width: pct + '%' }} /></div>
-          <div className="track-steps">
-            {STAGES.map((s, i) => (
-              <div key={s[0]} className={`ts ${i <= curIdx ? 'done' : ''} ${i === curIdx ? 'cur' : ''}`}><span className="ts-dot" /><em>{s[1]}</em></div>
-            ))}
-          </div>
-          <div className="track-items">{o.items.map((it, i) => <span key={i}>{it.qty}× {it.name}</span>)}</div>
-          <button className="track-cta" onClick={() => go('play')}>⏳ Got {eta} min? <b>Play &amp; earn →</b></button>
-        </section>
-      ) : o && o.status === 'served' ? (
-        <section className="track served"><div className="et-glyph">✅</div><p>Order #{o.number} served — enjoy!</p></section>
-      ) : (
-        <section className="track empty"><div className="et-glyph">📲</div><p>No live order yet.</p><span>Place one at the counter and watch it here in real time.</span></section>
-      )}
-
-      {c && (
-        <section className="loyalty-snap">
-          <div className="ls points"><span className="ls-n">{c.points.toLocaleString('en-IN')}</span><span className="ls-l">Points</span></div>
-          <div className="ls coins"><span className="ls-n">{c.coins}</span><span className="ls-l">Coins 🪙</span></div>
-          <div className="ls visits"><span className="ls-n">{c.visits}</span><span className="ls-l">Visits</span></div>
+      {pwa?.gameUnlock?.unlocked && (
+        <section className="unlock-card" onClick={() => go('play')}>
+          <span className="ul-emoji">🎉</span>
+          <div><b>You unlocked a reward game!</b><span>Your order qualifies — play &amp; earn points.</span></div>
+          <button onClick={(e) => { e.stopPropagation(); go('play'); }}>Play Now</button>
         </section>
       )}
+
+      {order.map((s) => <div key={s}>{blockFor(s)}</div>)}
 
       <section className="offer-card"><span className="of-emoji">🍫</span><div><b>Add a Brownie</b><span>₹99 · slip it in now</span></div><button onClick={onUpsell}>Add</button></section>
-
       <div className="quick"><button onClick={() => go('play')}><span>◉</span>Play</button><button onClick={() => go('rewards')}><span>★</span>Rewards</button></div>
     </>
   );
 }
 
-/* ---------------- Play (Spin the Wheel) ---------------- */
-function Play({ ctx, qs, onResult, reload }: { ctx: Ctx; qs: string; onResult: (m: string, e: string) => void; reload: () => void }) {
-  const [spinsLeft, setSpinsLeft] = useState(ctx.spinsLeft);
-  const [spinning, setSpinning] = useState(false);
-  const [rot, setRot] = useState(0);
-  const wheelRef = useRef<SVGSVGElement>(null);
+/* auto-sliding promo banner carousel */
+function Banners({ list }: { list: PwaBanner[] }) {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (list.length < 2) return;
+    const t = setInterval(() => setI((n) => (n + 1) % list.length), 4000);
+    return () => clearInterval(t);
+  }, [list.length]);
+  const b = list[Math.min(i, list.length - 1)];
+  if (!b) return null;
+  const inner = (
+    <>
+      <img src={b.imageUrl} alt={b.title} />
+      {b.title ? <span className="bn-title">{b.title}</span> : null}
+    </>
+  );
+  return (
+    <section className="banners">
+      {b.link ? <a href={b.link} className="bn-slide">{inner}</a> : <div className="bn-slide">{inner}</div>}
+      {list.length > 1 && <div className="bn-dots">{list.map((x, n) => <i key={x.id} className={n === i ? 'on' : ''} onClick={() => setI(n)} />)}</div>}
+    </section>
+  );
+}
 
-  async function spin() {
-    if (spinning || spinsLeft <= 0) return;
-    setSpinning(true);
-    const fp = `${navigator.userAgent.slice(0, 40)}|${screen.width}x${screen.height}`;
-    const r = await fetch('/api/customer/spin', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t: qs.replace('?t=', '') || undefined, fingerprint: fp }) });
-    if (!r.ok) { setSpinning(false); onResult('No spins left this visit', '🙃'); return; }
-    const data = await r.json();
-    const n = WHEEL.length, step = 360 / n;
-    const target = 360 * 5 + (360 - (data.index * step + step / 2));
-    setRot(target);
-    setTimeout(() => {
-      const seg = data.segment;
-      if (seg.kind === 'coins') onResult(`You won ${seg.value} coins!`, '🪙');
-      else if (seg.kind === 'coupon') onResult(`Won a coupon: ${seg.value}!`, '🎟️');
-      else onResult('So close! Try again next visit.', '🙃');
-      setSpinsLeft(0); setSpinning(false); reload();
-    }, 4100);
+/* featured dishes card row */
+function Featured({ list, onPick }: { list: PwaFeatured[]; onPick: (id: string) => void }) {
+  return (
+    <section className="feat">
+      <h4 className="feat-h">✨ Featured</h4>
+      <div className="feat-row">
+        {list.map((f) => (
+          <button key={f.id} className="feat-card" onClick={() => onPick(f.id)}>
+            {f.imageUrl ? <img src={f.imageUrl} alt={f.name} /> : <span className="feat-noimg">🍽️</span>}
+            {f.label ? <em className="feat-badge">{FEAT_LABEL[f.label] ?? f.label}</em> : null}
+            <b className="feat-name">{f.name}</b>
+            <span className="feat-price">{rupee(f.pricePaise)}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* manual table picker (QR had no table info) */
+function TablePicker({ token }: { token: string }) {
+  const [tables, setTables] = useState<{ token: string; label: string }[]>([]);
+  const [prefix, setPrefix] = useState('Welcome to Table');
+  useEffect(() => {
+    fetch(`/api/customer/tables?t=${encodeURIComponent(token)}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) { setTables(d.tables ?? []); setPrefix(d.welcomePrefix ?? 'Welcome to Table'); } }).catch(() => {});
+  }, [token]);
+  if (!tables.length) return null;
+  return (
+    <section className="tablepick">
+      <b>Which table are you at?</b>
+      <span>{prefix.replace(/table/i, '').trim() || 'Pick your table to start ordering'}</span>
+      <div className="tp-grid">
+        {tables.map((t) => (
+          <a key={t.token} href={`/app?t=${encodeURIComponent(t.token)}`} className="tp-btn">{t.label}</a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- Order (self-serve QR menu + cart) ---------------- */
+function Order({ ctx, qs, cart, setCart, reload, onPlaced }: {
+  ctx: Ctx;
+  qs: string;
+  cart: Record<string, number>;
+  setCart: React.Dispatch<React.SetStateAction<Record<string, number>>>;
+  reload: () => void;
+  onPlaced: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [useWallet, setUseWallet] = useState(false);
+  const byId = new Map<string, MenuItemDto>();
+  for (const c of ctx.menu) for (const i of c.items) byId.set(i.id, i);
+
+  const lines = Object.entries(cart).filter(([, q]) => q > 0);
+  const total = lines.reduce((s, [id, q]) => s + (byId.get(id)?.pricePaise ?? 0) * q, 0);
+  const count = lines.reduce((s, [, q]) => s + q, 0);
+
+  // wallet redemption preview (server re-clamps authoritatively)
+  const w = ctx.pwa?.wallet;
+  const walletEligible = !!w?.enabled && w.points >= w.minPointsToRedeem && total > 0;
+  const walletDiscountPaise = walletEligible ? Math.min(w!.balancePaise, Math.floor((total * w!.maxRedeemPctOfBill) / 100)) : 0;
+  const walletPoints = walletEligible ? Math.ceil((walletDiscountPaise / 100) * w!.pointsPerRupee) : 0;
+  const payable = useWallet ? Math.max(0, total - walletDiscountPaise) : total;
+
+  const setQty = (id: string, d: number) =>
+    setCart((c) => {
+      const q = Math.max(0, (c[id] ?? 0) + d);
+      const next = { ...c };
+      if (q === 0) delete next[id]; else next[id] = q;
+      return next;
+    });
+
+  async function place() {
+    if (!count || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch('/api/qr-order', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ t: qs.replace('?t=', '') || undefined, lines: lines.map(([itemId, qty]) => ({ itemId, qty })), walletPoints: useWallet ? walletPoints : undefined }),
+      });
+      if (!res.ok) throw new Error('failed');
+      setCart({});
+      reload();
+      onPlaced();
+    } catch {
+      setBusy(false);
+    }
+  }
+
+  if (!ctx.menu.length) {
+    return (
+      <>
+        <header className="pwa-h"><h3>Order</h3></header>
+        <p className="anti-cheat">Menu isn’t available right now — please order at the counter.</p>
+      </>
+    );
   }
 
   return (
     <>
-      <header className="pwa-h"><h3>Play &amp; earn</h3><span>{spinsLeft > 0 ? `${spinsLeft} spin left this visit` : 'Come back next visit'}</span></header>
-      <div className="wheel-wrap">
-        <div className="wheel-pointer">▼</div>
-        <svg ref={wheelRef} className="wheel" viewBox="0 0 200 200" style={{ transform: `rotate(${rot}deg)`, transition: rot ? 'transform 4s cubic-bezier(.17,.67,.18,1)' : 'none' }}>
-          {WHEEL.map((s, i) => {
-            const step = 360 / WHEEL.length;
-            const a0 = ((i * step - 90) * Math.PI) / 180, a1 = (((i + 1) * step - 90) * Math.PI) / 180;
-            const x0 = 100 + 100 * Math.cos(a0), y0 = 100 + 100 * Math.sin(a0);
-            const x1 = 100 + 100 * Math.cos(a1), y1 = 100 + 100 * Math.sin(a1);
-            const am = (a0 + a1) / 2, tx = 100 + 62 * Math.cos(am), ty = 100 + 62 * Math.sin(am);
-            return (
-              <g key={i}>
-                <path d={`M100,100 L${x0.toFixed(1)},${y0.toFixed(1)} A100,100 0 0,1 ${x1.toFixed(1)},${y1.toFixed(1)} Z`} fill={s.color} />
-                <text x={tx.toFixed(1)} y={ty.toFixed(1)} transform={`rotate(${(i * step + step / 2).toFixed(1)} ${tx.toFixed(1)} ${ty.toFixed(1)})`} fill="#fff" fontSize="8.5" fontWeight="700" textAnchor="middle" dominantBaseline="middle">{s.label}</text>
-              </g>
-            );
-          })}
-          <circle cx="100" cy="100" r="14" fill="#fff" stroke="#271811" strokeWidth="3" />
-        </svg>
-        <button className="spin-btn" onClick={spin} disabled={spinning || spinsLeft <= 0}>{spinning ? 'Spinning…' : spinsLeft > 0 ? 'SPIN' : 'No spins left'}</button>
+      <header className="pwa-h"><h3>Order</h3><span>{ctx.outlet.name} · {ctx.table.label} · pay at counter</span></header>
+      <div className="ord-list">
+        {ctx.menu.map((cat) => (
+          <div key={cat.id} className="ord-cat">
+            <h4 className="ord-cat-h">{cat.name}</h4>
+            {cat.items.map((it) => {
+              const q = cart[it.id] ?? 0;
+              return (
+                <div key={it.id} className="ord-item">
+                  <div className="ord-info">
+                    <b>{it.name}</b>
+                    <span>{rupee(it.pricePaise)}{it.tags?.includes('bestseller') ? ' · ★ Bestseller' : ''}</span>
+                  </div>
+                  {q === 0 ? (
+                    <button className="ord-add" onClick={() => setQty(it.id, 1)} aria-label={`Add ${it.name}`}>Add</button>
+                  ) : (
+                    <div className="ord-step">
+                      <button onClick={() => setQty(it.id, -1)} aria-label={`Remove one ${it.name}`}><Minus size={16} aria-hidden /></button>
+                      <span aria-live="polite">{q}</span>
+                      <button onClick={() => setQty(it.id, 1)} aria-label={`Add one ${it.name}`}><Plus size={16} aria-hidden /></button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
-      <div className="play-bal"><span>🪙 {ctx.customer?.coins ?? 0} coins</span><span>★ {ctx.customer?.points.toLocaleString('en-IN') ?? 0} pts</span></div>
-      <p className="anti-cheat">🔒 Server-authoritative &amp; rate-limited · 1 spin per visit, device-bound.</p>
+      {count > 0 && walletEligible && walletDiscountPaise > 0 && (
+        <button className={`wallet-toggle ${useWallet ? 'on' : ''}`} onClick={() => setUseWallet((v) => !v)}>
+          <span className="wt-check">{useWallet ? '✓' : ''}</span>
+          <span className="wt-label">Use wallet — <b>{rupee(walletDiscountPaise)} off</b><em>{walletPoints} points</em></span>
+        </button>
+      )}
+      {count > 0 && (
+        <button className="ord-place" disabled={busy} onClick={place}>
+          {busy ? 'Sending…' : <>Send order · {count} item{count > 1 ? 's' : ''} · {rupee(payable)}{useWallet && walletDiscountPaise > 0 ? ` (−${rupee(walletDiscountPaise)})` : ''}</>}
+        </button>
+      )}
+      <p className="anti-cheat">A waiter confirms your order before it reaches the kitchen.</p>
     </>
   );
 }
@@ -185,16 +384,47 @@ function Rewards({ ctx, qs, onRedeem, reload }: { ctx: Ctx; qs: string; onRedeem
     onRedeem(`Redeemed: ${r.name} (${data.coupon.code})`);
     reload();
   }
+  const w = ctx.pwa?.wallet;
+  const ly = ctx.pwa?.loyalty;
+  const tierName = ly?.tierName ?? ctx.customer?.tier ?? 'Bronze';
+  const progress = ly && ly.nextAtSpendPaise ? Math.min(100, Math.round((ly.spendPaise / ly.nextAtSpendPaise) * 100)) : 100;
+
   return (
     <>
-      <header className="pwa-h"><h3>Rewards wallet</h3></header>
+      <header className="pwa-h"><h3>Wallet &amp; rewards</h3></header>
       <div className="wallet-hero">
-        <span className="wh-tier">{ctx.customer?.tier ?? 'Bronze'} member</span>
-        <div className="wh-bal"><div><span>{points.toLocaleString('en-IN')}</span><em>points</em></div><div><span>{ctx.customer?.coins ?? 0}</span><em>coins</em></div></div>
+        <span className="wh-tier">{tierName} member</span>
+        <div className="wh-bal">
+          <div><span>{points.toLocaleString('en-IN')}</span><em>points</em></div>
+          {w?.enabled && <div><span>{rupee(Math.round((points / w.pointsPerRupee)) * 100)}</span><em>wallet value</em></div>}
+          <div><span>{ctx.customer?.coins ?? 0}</span><em>coins 🪙</em></div>
+        </div>
       </div>
-      <h4 className="rew-h">Redeem</h4>
+
+      {ly && (
+        <section className="loy-dash">
+          <div className="loy-grid">
+            <div className="loy-stat"><span>{ly.orders}</span><em>Orders</em></div>
+            <div className="loy-stat"><span>{rupee(ly.spendPaise)}</span><em>Total spend</em></div>
+            <div className="loy-stat"><span>{ly.points.toLocaleString('en-IN')}</span><em>Points</em></div>
+            <div className="loy-stat"><span>{ly.gamesPlayed}</span><em>Games played</em></div>
+            <div className="loy-stat"><span>{ly.rewardsWon}</span><em>Rewards won</em></div>
+            <div className="loy-stat"><span>{tierName}</span><em>Level</em></div>
+          </div>
+          {ly.nextTierName && ly.nextAtSpendPaise ? (
+            <div className="loy-next">
+              <div className="loy-bar"><i style={{ width: progress + '%' }} /></div>
+              <span>Spend {rupee(Math.max(0, ly.nextAtSpendPaise - ly.spendPaise))} more to reach <b>{ly.nextTierName}</b></span>
+            </div>
+          ) : <span className="loy-top">🏆 You’re at the top tier!</span>}
+        </section>
+      )}
+
+      <h4 className="rew-h">Redeem points</h4>
       <div className="rew-list">
-        {ctx.rewards.map((r) => (
+        {ctx.rewards.length === 0 ? (
+          <p className="anti-cheat">No rewards to redeem yet — keep earning points!</p>
+        ) : ctx.rewards.map((r) => (
           <div key={r.id} className="rew-card">
             <span className="rew-emoji">{REW_EMOJI[r.type] ?? '🎁'}</span>
             <div className="rew-info"><b>{r.name}</b><span>{r.type.replace('_', ' ')}</span></div>
@@ -202,7 +432,50 @@ function Rewards({ ctx, qs, onRedeem, reload }: { ctx: Ctx; qs: string; onRedeem
           </div>
         ))}
       </div>
+      {w?.enabled && <p className="anti-cheat">💳 Spend points as ₹ off your bill from the Order screen.</p>}
     </>
+  );
+}
+
+/* ---------------- Registration (name + mobile, no OTP) ---------------- */
+function Register({ cfg, outlet, welcome, qrToken, onDone }: { cfg: { enabled: boolean; collectName: boolean }; outlet: string; welcome: string; qrToken: string | null; onDone: () => void }) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function submit() {
+    setErr(null);
+    if (cfg.collectName && !name.trim()) return setErr('Please enter your name');
+    if (phone.replace(/\D/g, '').length < 8) return setErr('Enter a valid mobile number');
+    setBusy(true);
+    try {
+      const fingerprint = typeof navigator !== 'undefined' ? `${navigator.userAgent}|${typeof screen !== 'undefined' ? `${screen.width}x${screen.height}` : ''}` : '';
+      const res = await fetch('/api/customer/register', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ t: qrToken || undefined, phone, name: name.trim() || undefined, fingerprint }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error === 'invalid_phone' ? 'Enter a valid mobile number' : 'Could not register'); }
+      onDone();
+    } catch (e: any) { setErr(e.message || 'Something went wrong'); setBusy(false); }
+  }
+
+  return (
+    <div className="reg">
+      <BrandMark size={120} />
+      <AlphaTag />
+      <h2 className="reg-h">{welcome || `Welcome to ${outlet}`}</h2>
+      <p className="reg-sub">Tell us who you are to earn points, rewards and play games.</p>
+      <div className="reg-form">
+        {cfg.collectName && (
+          <label className="reg-field"><span>Your name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Arjun" autoComplete="name" aria-invalid={!!err && !name.trim()} /></label>
+        )}
+        <label className="reg-field"><span>Mobile number</span><input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" autoComplete="tel" placeholder="9876543210" aria-invalid={!!err} aria-describedby={err ? 'reg-err' : undefined} /></label>
+        {err && <p className="reg-err" id="reg-err" role="alert">{err}</p>}
+        <button className="reg-btn" disabled={busy} onClick={submit}>{busy ? 'Just a sec…' : 'Continue'}</button>
+        <span className="reg-fine">We use your number only to recognise you and save your rewards.</span>
+      </div>
+    </div>
   );
 }
 
@@ -229,61 +502,425 @@ function Confetti() {
   );
 }
 
+const loadCss = `
+.pwa-load { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; border-radius: 36px; background: radial-gradient(72% 48% at 50% 38%, color-mix(in srgb, var(--turmeric) 12%, transparent), transparent 70%), var(--paper); }
+.pwa-load-cap { font-family: var(--font-display); font-size: 16px; font-weight: 600; color: var(--ink-2); letter-spacing: .01em; }
+.pwa-load-steam { display: flex; gap: 7px; height: 12px; align-items: flex-end; }
+.pwa-load-steam i { width: 7px; height: 7px; border-radius: 50%; opacity: .5; animation: pwaSteam 1.05s ease-in-out infinite; }
+.pwa-load-steam i:nth-child(1) { background: var(--cardamom); }
+.pwa-load-steam i:nth-child(2) { background: var(--clay); animation-delay: .16s; }
+.pwa-load-steam i:nth-child(3) { background: var(--turmeric-d); animation-delay: .32s; }
+@keyframes pwaSteam { 0%,100% { transform: translateY(0); opacity: .45; } 50% { transform: translateY(-6px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .pwa-load-steam i { animation: none; opacity: .8; } }
+`;
+
 const shellCss = `
-.pwa-stage { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(80% 60% at 30% 10%, rgba(232,144,42,.12), transparent 60%), var(--paper); }
-.phone { position: relative; width: 400px; max-width: 100%; height: 820px; max-height: 92vh; background: #120b07; border-radius: 46px; padding: 12px; box-shadow: 0 40px 90px rgba(40,20,8,.35), inset 0 0 0 2px #2a1c12; }
-.phone-notch { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); width: 120px; height: 26px; background: #120b07; border-radius: 0 0 16px 16px; z-index: 5; }
-.pwa-screen { position: relative; height: 100%; border-radius: 36px; overflow: hidden; background: var(--paper); display: flex; flex-direction: column; }
+.pwa-stage { 
+  min-height: 100vh; 
+  display: grid; 
+  place-items: center; 
+  padding: 24px; 
+  background: radial-gradient(120% 120% at 50% 0%, color-mix(in srgb, var(--turmeric) 14%, transparent) 0%, color-mix(in srgb, var(--clay) 5%, transparent) 40%, var(--paper) 100%); 
+}
+.phone { 
+  position: relative; 
+  width: 400px; 
+  max-width: 100%; 
+  height: 820px; 
+  max-height: 92vh; 
+  background: linear-gradient(145deg, #1d120a, #0d0704); 
+  border-radius: 48px; 
+  padding: 12px; 
+  box-shadow: 
+    0 35px 80px rgba(39, 20, 8, 0.4), 
+    0 10px 30px rgba(0, 0, 0, 0.25), 
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 16px rgba(0, 0, 0, 0.8); 
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+.phone-notch { 
+  position: absolute; 
+  top: 14px; 
+  left: 50%; 
+  transform: translateX(-50%); 
+  width: 110px; 
+  height: 24px; 
+  background: #0d0704; 
+  border-radius: 12px; 
+  z-index: 5; 
+  box-shadow: inset 0 0 4px rgba(0,0,0,0.6);
+}
+.pwa-screen { 
+  position: relative; 
+  height: 100%; 
+  border-radius: 36px; 
+  overflow: hidden; 
+  background: var(--paper); 
+  display: flex; 
+  flex-direction: column; 
+  border: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+}
 `;
 
 const css = `
-.pwa-scroll { flex: 1; overflow-y: auto; padding: 44px 16px 80px; display: flex; flex-direction: column; gap: 16px; }
+.pwa-scroll { flex: 1; overflow-y: auto; padding: 44px 16px 80px; display: flex; flex-direction: column; gap: 18px; }
 .pwa-scroll::-webkit-scrollbar { width: 0; }
-.pwa-nav { position: absolute; bottom: 0; left: 0; right: 0; height: 64px; display: grid; grid-template-columns: repeat(3,1fr); background: var(--paper-3); border-top: 1px solid var(--line); }
-.pwa-nav button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10.5px; font-weight: 700; color: var(--ink-3); background: none; border: none; cursor: pointer; font-family: var(--font-body); }
-.pwa-nav button span { font-size: 19px; }
-.pwa-nav button.on { color: var(--turmeric-d); }
+.pwa-scroll > * { animation: tabFadeIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes tabFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.pwa-nav { 
+  position: absolute; 
+  bottom: 0; 
+  left: 0; 
+  right: 0; 
+  min-height: 68px; 
+  padding-bottom: env(safe-area-inset-bottom); 
+  display: grid; 
+  grid-template-columns: repeat(4, 1fr); 
+  background: color-mix(in srgb, var(--paper-3) 76%, transparent); 
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid color-mix(in srgb, var(--line) 35%, transparent); 
+  z-index: 10;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.02);
+}
+.pwa-nav button { 
+  display: flex; 
+  flex-direction: column; 
+  align-items: center; 
+  justify-content: center; 
+  gap: 4px; 
+  min-height: 60px; 
+  font-size: 11px; 
+  font-weight: 700; 
+  color: var(--ink-3); 
+  background: none; 
+  border: none; 
+  cursor: pointer; 
+  font-family: var(--font-body); 
+  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); 
+  position: relative;
+}
+.pwa-nav button span { 
+  display: grid; 
+  place-items: center; 
+  transition: transform 0.2s ease;
+}
+.pwa-nav button:hover span {
+  transform: translateY(-2px);
+  color: var(--gold-d);
+}
+.pwa-nav button.on { color: var(--gold-d); }
+.pwa-nav button.on span { transform: translateY(-2px) scale(1.08); }
+.pwa-nav button.on::after { 
+  content: ""; 
+  position: absolute; 
+  top: 0; 
+  left: 50%; 
+  transform: translateX(-50%); 
+  width: 24px; 
+  height: 4px; 
+  border-radius: 0 0 4px 4px; 
+  background: var(--gold); 
+  box-shadow: 0 2px 8px rgba(201, 154, 46, 0.4);
+}
+.nav-badge { position: absolute; top: 6px; left: 50%; margin-left: 6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 99px; background: var(--clay); color: #fff; font-size: 9.5px; font-weight: 800; font-style: normal; display: grid; place-items: center; }
+
+.ord-list { display: flex; flex-direction: column; gap: 16px; }
+.ord-cat-h { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); margin-top: 10px; margin-bottom: 6px; }
+.ord-item { 
+  display: flex; 
+  align-items: center; 
+  gap: 12px; 
+  padding: 14px 16px; 
+  background: color-mix(in srgb, var(--paper-3) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 30%, transparent);
+  border-radius: 18px;
+  transition: all 0.25s ease;
+  backdrop-filter: blur(4px);
+}
+.ord-item:hover {
+  background: color-mix(in srgb, var(--paper-3) 75%, transparent);
+  border-color: color-mix(in srgb, var(--line) 65%, transparent);
+  transform: translateY(-1px);
+}
+.ord-info b { display: block; font-size: 15px; color: var(--ink); } 
+.ord-info span { font-size: 12px; color: var(--ink-3); font-weight: 600; }
+.ord-add { 
+  margin-left: auto; 
+  padding: 8px 20px; 
+  border-radius: 99px; 
+  background: var(--turmeric); 
+  color: #2a1607; 
+  font-weight: 800; 
+  font-size: 13px; 
+  border: none; 
+  cursor: pointer; 
+  box-shadow: 0 2px 6px rgba(232, 144, 42, 0.15);
+  transition: all 0.2s;
+}
+.ord-add:hover {
+  background: var(--turmeric-l);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(232, 144, 42, 0.25);
+}
+.ord-add:active {
+  transform: translateY(0) scale(0.96);
+}
+.ord-step { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.ord-step button { 
+  width: 32px; 
+  height: 32px; 
+  display: grid; 
+  place-items: center; 
+  border-radius: 50%; 
+  border: 1px solid var(--line-2); 
+  background: var(--paper-3); 
+  color: var(--ink); 
+  cursor: pointer; 
+  transition: all 0.2s;
+  box-shadow: var(--sh-1);
+}
+.ord-step button:hover {
+  background: var(--paper-2);
+  border-color: var(--ink-3);
+  color: var(--espresso);
+}
+.ord-step button:active { transform: scale(0.9); }
+.ord-step span { font-weight: 800; min-width: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+.ord-place { 
+  position: sticky; 
+  bottom: 0; 
+  width: 100%; 
+  padding: 16px; 
+  border-radius: 18px; 
+  background: var(--gold-grad); 
+  color: var(--espresso); 
+  font-weight: 800; 
+  font-size: 15px; 
+  border: 1px solid var(--gold-d); 
+  cursor: pointer; 
+  box-shadow: var(--sh-3), 0 4px 15px rgba(201, 154, 46, 0.15); 
+  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ord-place:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: var(--sh-3), 0 8px 25px rgba(201, 154, 46, 0.3);
+}
+.ord-place:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+.ord-place:disabled { opacity: .7; cursor: default; transform: none; box-shadow: var(--sh-1); }
 
 .pwa-top { display: flex; justify-content: space-between; align-items: center; }
-.pwa-hi { display: block; font-family: var(--font-display); font-size: 22px; font-weight: 700; }
+.pwa-hi { display: block; font-family: var(--font-display); font-size: 28px; font-weight: 600; line-height: 1.05; color: var(--ink); }
 .pwa-loc { font-size: 12px; color: var(--ink-3); font-weight: 600; }
+.pwa-tag { font-size: 13px; color: var(--ink-2); font-weight: 600; margin-top: -8px; }
+
+/* registration */
+.reg { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 40px 24px; text-align: center; background: radial-gradient(72% 48% at 50% 30%, color-mix(in srgb, var(--turmeric) 12%, transparent), transparent 70%), var(--paper); border-radius: 36px; }
+.reg-h { font-family: var(--font-display); font-size: 30px; font-weight: 600; line-height: 1.08; margin-top: 10px; }
+.reg-sub { font-size: 13px; color: var(--ink-3); max-width: 280px; }
+.reg-form { width: 100%; max-width: 300px; display: grid; gap: 12px; margin-top: 14px; }
+.reg-field { display: grid; gap: 5px; text-align: left; }
+.reg-field span { font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.reg-field input { width: 100%; padding: 13px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--paper-3); font-size: 16px; outline: none; }
+.reg-field input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 22%, transparent); }
+.reg-err { font-size: 12px; color: var(--clay); font-weight: 700; }
+.reg-btn { padding: 14px; border-radius: 14px; background: var(--gold-grad); color: var(--espresso); font-weight: 800; font-size: 15px; border: 1px solid var(--gold-d); cursor: pointer; box-shadow: var(--sh-2), inset 0 1px 0 rgba(255,255,255,.35); }
+.reg-btn:active { transform: scale(.99); }
+.reg-btn:disabled { opacity: .7; cursor: default; }
+.reg-fine { font-size: 10.5px; color: var(--ink-3); line-height: 1.5; }
+
+/* manual table picker */
+.tablepick { background: color-mix(in srgb, var(--paper-3) 75%, transparent); backdrop-filter: blur(8px); border: 1px solid color-mix(in srgb, var(--line) 40%, transparent); border-radius: 20px; padding: 16px; display: grid; gap: 4px; box-shadow: var(--sh-1); }
+.tablepick b { font-size: 15px; color: var(--ink); } 
+.tablepick span { font-size: 12px; color: var(--ink-3); }
+.tp-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.tp-btn { padding: 12px 0; text-align: center; border-radius: 12px; background: var(--paper); border: 1px solid var(--line-2); font-weight: 800; font-size: 14px; color: var(--ink); text-decoration: none; transition: all 0.2s; }
+.tp-btn:hover { background: var(--paper-2); transform: translateY(-1px); }
+
+/* game unlock prompt */
+.unlock-card { display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: 22px; cursor: pointer; background: linear-gradient(120deg, color-mix(in srgb, var(--cardamom) 14%, var(--paper-3)), var(--paper-3)); border: 1px solid color-mix(in srgb, var(--cardamom) 50%, transparent); box-shadow: var(--sh-1); transition: all 0.25s ease; }
+.unlock-card:hover { transform: translateY(-2px); box-shadow: var(--sh-2); border-color: var(--cardamom); }
+.ul-emoji { font-size: 28px; } 
+.unlock-card b { display: block; font-size: 14px; color: var(--ink); } 
+.unlock-card div span { font-size: 11.5px; color: var(--ink-3); }
+.unlock-card button { margin-left: auto; padding: 9px 16px; border-radius: 99px; background: var(--cardamom); color: #fff; font-weight: 800; font-size: 13px; border: none; cursor: pointer; white-space: nowrap; transition: background 0.2s; }
+.unlock-card button:hover { background: var(--cardamom-d); }
+
+/* promo banners */
+.banners { display: grid; gap: 8px; }
+.bn-slide { display: block; position: relative; border-radius: 24px; overflow: hidden; aspect-ratio: 16 / 7; box-shadow: var(--sh-2); border: 1px solid color-mix(in srgb, var(--line) 40%, transparent); }
+.bn-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bn-slide::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(18, 11, 7, 0.75) 0%, rgba(18, 11, 7, 0.2) 50%, transparent 100%);
+  pointer-events: none;
+}
+.bn-title { position: absolute; left: 16px; bottom: 12px; color: #fff; font-weight: 800; font-size: 16px; text-shadow: 0 2px 8px rgba(0,0,0,.3); z-index: 2; }
+.bn-dots { display: flex; gap: 6px; justify-content: center; }
+.bn-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-2); cursor: pointer; transition: background 0.2s; }
+.bn-dots i.on { background: var(--turmeric-d); width: 18px; border-radius: 9px; }
+
+/* featured dishes */
+.feat-h { font-size: 14px; font-weight: 800; margin-bottom: 8px; color: var(--ink-2); letter-spacing: 0.02em; }
+.feat-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; margin: 0 -4px; padding-left: 4px; }
+.feat-row::-webkit-scrollbar { height: 0; }
+.feat-card { 
+  position: relative; 
+  flex: 0 0 136px; 
+  text-align: left; 
+  background: color-mix(in srgb, var(--paper-3) 70%, transparent); 
+  backdrop-filter: blur(6px);
+  border: 1px solid color-mix(in srgb, var(--gold-hair) 35%, transparent); 
+  border-radius: 22px; 
+  overflow: hidden; 
+  padding: 0 0 12px; 
+  cursor: pointer; 
+  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); 
+  box-shadow: var(--sh-1);
+}
+.feat-card:hover { 
+  transform: translateY(-3px); 
+  box-shadow: var(--sh-2);
+  border-color: var(--gold);
+}
+.feat-card img { width: 100%; height: 90px; object-fit: cover; display: block; transition: transform 0.4s ease; }
+.feat-card:hover img { transform: scale(1.04); }
+.feat-noimg { display: grid; place-items: center; width: 100%; height: 90px; font-size: 30px; background: var(--paper-2); }
+.feat-badge { 
+  display: inline-block; 
+  position: absolute; 
+  top: 8px; 
+  left: 8px; 
+  font-style: normal; 
+  font-size: 9.5px; 
+  font-weight: 800; 
+  background: var(--turmeric); 
+  color: #2a1607; 
+  padding: 2px 8px; 
+  border-radius: 99px; 
+  box-shadow: 0 2px 6px rgba(232, 144, 42, 0.25);
+  z-index: 2;
+}
+.feat-name { display: block; font-size: 13.5px; font-weight: 700; padding: 10px 12px 0; line-height: 1.25; color: var(--ink); }
+.feat-price { display: block; font-size: 13px; font-weight: 800; color: var(--turmeric-d); padding: 3px 12px 0; }
 .tier-ring { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--gold) 70%, var(--line) 0); }
 .tier-ring b { width: 34px; height: 34px; border-radius: 50%; background: var(--paper-3); display: grid; place-items: center; font-family: var(--font-display); font-weight: 800; color: var(--gold); }
 
-.track { background: linear-gradient(160deg, color-mix(in srgb, var(--turmeric) 10%, var(--paper-3)), var(--paper-3)); border: 1px solid var(--line); border-radius: 22px; padding: 16px; box-shadow: var(--sh-2); }
+.track { 
+  background: linear-gradient(150deg, color-mix(in srgb, var(--gold) 14%, var(--paper-2)), color-mix(in srgb, var(--paper-3) 92%, transparent)); 
+  border: 1px solid color-mix(in srgb, var(--gold-hair) 55%, transparent); 
+  border-radius: 26px; 
+  padding: 20px; 
+  box-shadow: var(--sh-2), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.track:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--sh-3);
+  border-color: var(--gold-hair);
+}
 .track.empty, .track.served { text-align: center; display: grid; gap: 6px; place-items: center; }
-.track .et-glyph { font-size: 40px; } .track.empty p, .track.served p { font-weight: 700; } .track.empty span { font-size: 12.5px; color: var(--ink-3); }
+.track .et-glyph { font-size: 40px; } 
+.track.empty p, .track.served p { font-weight: 700; color: var(--ink); } 
+.track.empty span { font-size: 12.5px; color: var(--ink-3); }
 .track-head { display: flex; justify-content: space-between; font-weight: 700; font-size: 13.5px; color: var(--ink-2); margin-bottom: 12px; }
 .track-eta { color: var(--turmeric-d); }
-.track-bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; margin-bottom: 16px; }
-.track-bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--turmeric), var(--clay)); transition: width 1s; }
-.track-steps { display: flex; justify-content: space-between; margin-bottom: 12px; }
+.track-bar { 
+  height: 10px; 
+  background: color-mix(in srgb, var(--line) 50%, transparent); 
+  border-radius: 99px; 
+  overflow: hidden; 
+  margin-bottom: 18px; 
+  border: 1.5px solid color-mix(in srgb, var(--line-2) 15%, transparent);
+}
+.track-bar i { 
+  display: block; 
+  height: 100%; 
+  border-radius: 99px; 
+  background: linear-gradient(90deg, var(--turmeric), var(--clay), var(--turmeric)); 
+  background-size: 200% 100%;
+  animation: shimmerProgress 2.5s linear infinite;
+  transition: width 1s ease-in-out; 
+}
+@keyframes shimmerProgress {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.track-steps { display: flex; justify-content: space-between; margin-bottom: 14px; }
 .ts { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; }
-.ts-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--line); border: 2px solid var(--line-2); }
-.ts.done .ts-dot { background: var(--cardamom); border-color: var(--cardamom); }
-.ts.cur .ts-dot { background: var(--turmeric); border-color: var(--turmeric); box-shadow: 0 0 0 4px color-mix(in srgb, var(--turmeric) 25%, transparent); }
+.ts-dot { 
+  width: 14px; 
+  height: 14px; 
+  border-radius: 50%; 
+  background: color-mix(in srgb, var(--line) 60%, transparent); 
+  border: 2px solid var(--line-2); 
+  transition: all 0.3s ease;
+}
+.ts.done .ts-dot { 
+  background: var(--cardamom); 
+  border-color: var(--cardamom); 
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cardamom) 20%, transparent);
+}
+.ts.cur .ts-dot { 
+  background: var(--turmeric); 
+  border-color: #fff; 
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--turmeric) 35%, transparent); 
+}
 .ts em { font-style: normal; font-size: 9.5px; font-weight: 700; color: var(--ink-3); text-align: center; }
 .ts.done em, .ts.cur em { color: var(--ink); }
-.track-items { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-.track-items span { font-size: 11px; font-weight: 700; background: var(--paper); border: 1px solid var(--line); padding: 4px 9px; border-radius: 99px; color: var(--ink-2); }
-.track-cta { width: 100%; padding: 12px; border-radius: 14px; background: var(--ink); color: var(--paper-2); font-weight: 700; font-size: 13.5px; border: none; cursor: pointer; font-family: var(--font-body); }
+.track-items { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.track-items span { font-size: 11px; font-weight: 700; background: var(--paper-2); border: 1px solid var(--line); padding: 4px 10px; border-radius: 99px; color: var(--ink-2); }
+.track-cta { width: 100%; padding: 13px; border-radius: 16px; background: var(--ink); color: var(--paper-2); font-weight: 700; font-size: 14px; border: none; cursor: pointer; font-family: var(--font-body); transition: all 0.2s; box-shadow: var(--sh-1); }
+.track-cta:hover { background: #1a100a; transform: translateY(-1px); box-shadow: var(--sh-2); }
 .track-cta b { color: var(--turmeric-l); }
 
-.loyalty-snap { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
-.ls { padding: 14px 10px; border-radius: 14px; text-align: center; border: 1px solid var(--line); background: var(--paper-3); }
-.ls.points { background: color-mix(in srgb, var(--gold) 12%, var(--paper-3)); }
-.ls.coins { background: color-mix(in srgb, var(--turmeric) 12%, var(--paper-3)); }
-.ls-n { display: block; font-size: 22px; font-weight: 700; font-family: var(--font-display); }
-.ls-l { font-size: 10.5px; font-weight: 700; color: var(--ink-3); }
+.loyalty-snap { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+.ls { 
+  padding: 16px 12px; 
+  border-radius: 20px; 
+  text-align: center; 
+  border: 1px solid color-mix(in srgb, var(--gold-hair) 40%, transparent); 
+  background: color-mix(in srgb, var(--paper-3) 65%, transparent); 
+  backdrop-filter: blur(8px);
+  box-shadow: var(--sh-1);
+  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ls:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--sh-2);
+  border-color: var(--gold-hair);
+}
+.ls.points { background: linear-gradient(135deg, color-mix(in srgb, var(--gold) 14%, var(--paper-3)), color-mix(in srgb, var(--paper-3) 75%, transparent)); }
+.ls.coins { background: linear-gradient(135deg, color-mix(in srgb, var(--turmeric) 14%, var(--paper-3)), color-mix(in srgb, var(--paper-3) 75%, transparent)); }
+.ls.visits { background: linear-gradient(135deg, color-mix(in srgb, var(--cardamom) 10%, var(--paper-3)), color-mix(in srgb, var(--paper-3) 75%, transparent)); }
+.ls-n { display: block; font-size: 24px; font-weight: 700; font-family: var(--font-display); color: var(--ink); line-height: 1.1; }
+.ls-l { font-size: 11px; font-weight: 700; color: var(--ink-2); margin-top: 2px; display: block; }
 
-.offer-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--paper-3); border: 1px solid var(--line); }
-.of-emoji { font-size: 26px; } .offer-card b { display: block; font-size: 14px; } .offer-card div span { font-size: 11.5px; color: var(--ink-3); }
-.offer-card button { margin-left: auto; padding: 9px 16px; border-radius: 99px; background: var(--turmeric); color: #2a1607; font-weight: 800; font-size: 13px; border: none; cursor: pointer; }
-.quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.quick button { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 13px; border-radius: 14px; background: var(--ink); color: var(--paper-2); font-weight: 700; font-size: 11px; border: none; cursor: pointer; font-family: var(--font-body); }
+.offer-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 20px; background: color-mix(in srgb, var(--paper-3) 70%, transparent); backdrop-filter: blur(6px); border: 1px solid color-mix(in srgb, var(--line) 40%, transparent); box-shadow: var(--sh-1); transition: all 0.25s; }
+.offer-card:hover { transform: translateY(-1px); border-color: var(--line-2); }
+.of-emoji { font-size: 26px; } 
+.offer-card b { display: block; font-size: 14px; color: var(--ink); } 
+.offer-card div span { font-size: 11.5px; color: var(--ink-3); }
+.offer-card button { margin-left: auto; padding: 9px 18px; border-radius: 99px; background: var(--turmeric); color: #2a1607; font-weight: 800; font-size: 13px; border: none; cursor: pointer; transition: all 0.2s; }
+.offer-card button:hover { background: var(--turmeric-l); transform: translateY(-1px); }
+
+.quick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.quick button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px; border-radius: 18px; background: var(--ink); color: var(--paper-2); font-weight: 700; font-size: 12px; border: none; cursor: pointer; font-family: var(--font-body); transition: all 0.2s; box-shadow: var(--sh-1); }
+.quick button:hover { background: #1a100a; transform: translateY(-1.5px); box-shadow: var(--sh-2); }
 .quick button span { font-size: 18px; color: var(--turmeric-l); }
 
-.pwa-h h3 { font-size: 26px; } .pwa-h span { font-size: 12.5px; color: var(--ink-3); font-weight: 600; }
+.pwa-h h3 { font-size: 30px; line-height: 1.05; color: var(--ink); } 
+.pwa-h span { font-size: 12.5px; color: var(--ink-3); font-weight: 600; }
 .wheel-wrap { display: flex; flex-direction: column; align-items: center; position: relative; }
 .wheel-pointer { position: absolute; top: -6px; z-index: 4; font-size: 26px; color: var(--ink); }
 .wheel { width: 250px; height: 250px; border-radius: 50%; box-shadow: 0 14px 36px rgba(40,20,8,.3), inset 0 0 0 6px #fff; }
@@ -293,18 +930,123 @@ const css = `
 .play-bal span { font-weight: 700; font-size: 13px; background: var(--paper-3); border: 1px solid var(--line); padding: 8px 14px; border-radius: 99px; }
 .anti-cheat { font-size: 11px; color: var(--ink-3); text-align: center; line-height: 1.5; }
 
-.wallet-hero { border-radius: 22px; padding: 20px; color: #fff; background: linear-gradient(135deg, #3a2418, var(--ink)); box-shadow: var(--sh-3); }
-.wh-tier { font-size: 12px; font-weight: 800; letter-spacing: .05em; color: var(--gold); text-transform: uppercase; }
-.wh-bal { display: flex; gap: 28px; margin-top: 12px; }
-.wh-bal span { font-size: 30px; font-weight: 800; font-family: var(--font-display); } .wh-bal em { font-style: normal; font-size: 11px; color: var(--ink-3); display: block; }
-.rew-h { font-size: 16px; }
+/* Premium dark card — gold foil and shine effect */
+.wallet-hero { 
+  border-radius: 26px; 
+  padding: 24px; 
+  color: #fff; 
+  background: linear-gradient(135deg, #2e1d13 0%, #150b06 100%); 
+  border: 1px solid rgba(230, 196, 99, 0.25); 
+  box-shadow: var(--sh-3), 0 15px 35px rgba(0, 0, 0, 0.25); 
+  position: relative;
+  overflow: hidden;
+}
+.wallet-hero::before {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(230,196,99,0.08) 0%, transparent 60%);
+  pointer-events: none;
+}
+.wallet-hero::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.03) 45%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.03) 55%, transparent 60%);
+  transform: translateX(-100%);
+  animation: shineReflect 6s infinite;
+  pointer-events: none;
+}
+@keyframes shineReflect {
+  0% { transform: translateX(-100%); }
+  20%, 100% { transform: translateX(100%); }
+}
+.wh-tier { 
+  font-size: 11px; 
+  font-weight: 800; 
+  letter-spacing: .08em; 
+  color: #D9A93A; 
+  text-transform: uppercase; 
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+.wh-bal { display: flex; gap: 28px; margin-top: 14px; }
+.wh-bal span { font-size: 32px; font-weight: 800; font-family: var(--font-display); color: #fff; line-height: 1.1; } 
+.wh-bal em { font-style: normal; font-size: 11px; color: #C9B6A0; display: block; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.rew-h { font-size: 15px; color: var(--ink-2); letter-spacing: 0.01em; margin-bottom: 6px; }
 .rew-list { display: flex; flex-direction: column; gap: 10px; }
-.rew-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--paper-3); border: 1px solid var(--line); }
-.rew-emoji { font-size: 26px; } .rew-info b { display: block; font-size: 14px; } .rew-info span { font-size: 11px; color: var(--ink-3); text-transform: capitalize; }
-.rew-card button { margin-left: auto; padding: 9px 14px; border-radius: 99px; background: var(--cardamom); color: #fff; font-weight: 800; font-size: 12.5px; border: none; cursor: pointer; white-space: nowrap; }
-.rew-card button.lock { background: var(--line-2); color: var(--ink-3); }
+.rew-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 20px; background: color-mix(in srgb, var(--paper-3) 70%, transparent); backdrop-filter: blur(4px); border: 1px solid color-mix(in srgb, var(--gold-hair) 40%, transparent); box-shadow: var(--sh-1); transition: all 0.25s ease; }
+.rew-card:hover { transform: translateY(-1.5px); box-shadow: var(--sh-2); border-color: var(--gold-hair); }
+.rew-emoji { font-size: 26px; } 
+.rew-info b { display: block; font-size: 14.5px; color: var(--ink); } 
+.rew-info span { font-size: 11px; color: var(--ink-3); text-transform: capitalize; font-weight: 600; }
+.rew-card button { margin-left: auto; padding: 9px 16px; border-radius: 99px; background: var(--cardamom); color: #fff; font-weight: 800; font-size: 12.5px; border: none; cursor: pointer; white-space: nowrap; transition: all 0.2s; box-shadow: 0 2px 6px rgba(78, 122, 74, 0.2); }
+.rew-card button:hover:not(.lock) { background: var(--cardamom-d); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(78, 122, 74, 0.3); }
+.rew-card button.lock { background: var(--line-2); color: var(--ink-3); box-shadow: none; cursor: default; }
+.rew-card button.lock:hover { transform: none; }
 
-.pwa-toast { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 60; display: flex; gap: 8px; align-items: center; background: var(--ink); color: var(--paper-2); padding: 12px 18px; border-radius: 99px; font-weight: 700; font-size: 13.5px; box-shadow: var(--sh-3); white-space: nowrap; }
+/* wallet checkout toggle */
+.wallet-toggle { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; margin-bottom: 8px; border-radius: 18px; background: color-mix(in srgb, var(--paper-3) 70%, transparent); backdrop-filter: blur(4px); border: 1.5px solid color-mix(in srgb, var(--line-2) 50%, transparent); cursor: pointer; text-align: left; transition: all 0.25s ease; }
+.wallet-toggle.on { border-color: var(--cardamom); background: color-mix(in srgb, var(--cardamom) 8%, var(--paper-3)); }
+.wt-check { width: 22px; height: 22px; border-radius: 8px; border: 2px solid var(--line-2); display: grid; place-items: center; font-weight: 900; color: #fff; flex-shrink: 0; transition: all 0.2s; }
+.wallet-toggle.on .wt-check { background: var(--cardamom); border-color: var(--cardamom); }
+.wt-label { font-size: 14.5px; font-weight: 700; color: var(--ink); } 
+.wt-label b { color: var(--cardamom-d); } 
+.wt-label em { font-style: normal; display: block; font-size: 11.5px; color: var(--ink-3); font-weight: 600; margin-top: 1px; }
+
+/* loyalty dashboard */
+.loy-dash { 
+  background: color-mix(in srgb, var(--paper-3) 65%, transparent); 
+  backdrop-filter: blur(8px);
+  border: 1px solid color-mix(in srgb, var(--gold-hair) 40%, transparent); 
+  border-radius: 22px; 
+  padding: 18px; 
+  display: grid; 
+  gap: 14px; 
+  box-shadow: var(--sh-1);
+}
+.loy-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.loy-stat { 
+  text-align: center; 
+  padding: 8px 0;
+  background: color-mix(in srgb, var(--paper-2) 40%, transparent);
+  border-radius: 14px;
+}
+.loy-stat span { display: block; font-size: 18px; font-weight: 800; font-family: var(--font-display); color: var(--ink); }
+.loy-stat em { font-style: normal; font-size: 10px; color: var(--ink-3); font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+.loy-next { display: grid; gap: 6px; } 
+.loy-next span { font-size: 12px; color: var(--ink-3); text-align: center; font-weight: 600; } 
+.loy-next b { color: var(--turmeric-d); }
+.loy-bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; border: 0.5px solid color-mix(in srgb, var(--line-2) 40%, transparent); }
+.loy-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--turmeric), var(--gold)); border-radius: 99px; transition: width 1s ease-in-out; }
+.loy-top { font-size: 12.5px; text-align: center; color: var(--gold); font-weight: 700; }
+
+.pwa-toast { 
+  position: absolute; 
+  left: 50%; 
+  bottom: 84px; 
+  transform: translateX(-50%); 
+  z-index: 60; 
+  display: flex; 
+  gap: 8px; 
+  align-items: center; 
+  background: rgba(39, 24, 17, 0.88); 
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--paper-2); 
+  padding: 12px 20px; 
+  border-radius: 99px; 
+  font-weight: 700; 
+  font-size: 13.5px; 
+  box-shadow: var(--sh-3), 0 8px 25px rgba(0,0,0,0.15); 
+  white-space: nowrap; 
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
 .confetti { position: absolute; inset: 0; pointer-events: none; z-index: 70; display: grid; place-content: center; }
 .confetti i { position: absolute; width: 9px; height: 14px; animation: cfly var(--d) cubic-bezier(.2,.7,.2,1) forwards; }
 @keyframes cfly { 0% { transform: translate(0,0) rotate(0); opacity: 1; } 100% { transform: translate(var(--x), var(--y)) rotate(var(--r)); opacity: 0; } }

@@ -29,6 +29,21 @@ const disc = computeBill([{ pricePaise: 20000, gstRate: 5, qty: 2 }], { discount
 eq('discount 10% of 400', disc.discountPaise, 4000);
 eq('taxable after discount', disc.taxablePaise, 36000);
 
+// INCLUSIVE: a ₹105 price @ 5% holds ₹100 base + ₹5 tax; total stays ₹105
+const incl = computeBill([{ pricePaise: 10500, gstRate: 5, qty: 1 }], { gstInclusive: true });
+eq('inclusive net base', incl.subtotalPaise, 10000);
+eq('inclusive tax extracted', incl.cgstPaise + incl.sgstPaise, 500);
+eq('inclusive total == menu price', incl.totalPaise, 10500);
+
+// INCLUSIVE off (exclusive) on the same price adds tax on top → ₹110.25 → ₹110
+const excl = computeBill([{ pricePaise: 10500, gstRate: 5, qty: 1 }]);
+eq('exclusive adds tax on top', excl.cgstPaise + excl.sgstPaise, 525);
+
+// GST disabled ignores inclusive flag entirely (no tax, price is the total)
+const off = computeBill([{ pricePaise: 10500, gstRate: 5, qty: 1 }], { gstInclusive: true, gstEnabled: false });
+eq('disabled = no tax', off.cgstPaise + off.sgstPaise + off.igstPaise, 0);
+eq('disabled total == price', off.totalPaise, 10500);
+
 console.log(`\nformatINR sample: ${formatINR(bill.totalPaise)}`);
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`);
 if (failed) process.exit(1);

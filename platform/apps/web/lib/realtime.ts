@@ -25,9 +25,17 @@ export type Ticket = {
   placedAt: number; // epoch ms
   items: TicketItem[];
 };
+export type NotifyPayload = { id: string; type: string; severity: string; title: string; body: string | null; at: number };
 export type RealtimeEvent =
   | { type: 'order.new'; ticket: Ticket }
-  | { type: 'order.updated'; ticket: Ticket };
+  | { type: 'order.updated'; ticket: Ticket }
+  // Phase C — a QR order awaiting waiter approval. The KDS ignores this type
+  // (it only reacts to order.new/updated), so nothing reaches the kitchen until
+  // a waiter approves and we publish order.new.
+  | { type: 'order.pending'; ticket: Ticket }
+  // Phase E — an alert/notification for the owner monitor bell. Carries no
+  // ticket, so the customer stream (which filters by ticket.table) ignores it.
+  | { type: 'notify'; notification: NotifyPayload };
 
 function channel(outletId: string) {
   return `outlet:${outletId}`;

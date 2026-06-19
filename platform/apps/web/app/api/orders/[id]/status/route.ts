@@ -3,6 +3,8 @@ import { prisma, type KotStatus, type OrderStatus } from '@cafeos/db';
 import { AdvanceOrderSchema } from '@cafeos/core';
 import { getSession } from '@/lib/auth';
 import { publish, toTicket } from '@/lib/realtime';
+import { alertOrderCancelled } from '@/lib/alerts';
+import { reverseWalletHold } from '@/lib/wallet';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -52,5 +54,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   });
 
   publish(session.outletId, { type: 'order.updated', ticket: toTicket(updated) });
+  if (next === 'cancelled') {
+    await reverseWalletHold(params.id); // refund any provisional wallet points
+    await alertOrderCancelled(session.outletId, { number: updated.number, by: session.name, totalPaise: updated.totalPaise });
+  }
   return NextResponse.json({ ok: true, status: next });
 }
