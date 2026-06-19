@@ -2,9 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy package files explicitly
+# Copy package and config files
 COPY platform/package.json .
 COPY platform/package-lock.json .
+COPY platform/turbo.json .
+COPY platform/tsconfig.base.json .
 
 # Copy the entire platform directory structure
 COPY platform/apps ./apps
