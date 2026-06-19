@@ -2,13 +2,18 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy entire platform directory (has package.json and all source)
-COPY platform/ .
+# Copy package files explicitly
+COPY platform/package.json .
+COPY platform/package-lock.json .
+
+# Copy the entire platform directory structure
+COPY platform/apps ./apps
+COPY platform/packages ./packages
 
 # Install dependencies
 RUN npm ci
 
-# Generate Prisma client and build Next.js
+# Generate Prisma client and build
 RUN npm run db:generate && npm run build
 
 EXPOSE 3000
