@@ -3,4 +3,4 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile.railway"
 
 [deploy]
-startCommand = "npm run -w @cafeos/web start"
+startCommand = "npm run -w @cafeos/web start -- --port 3000"
