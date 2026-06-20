@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '@cafeos/db';
-import { resolveTable, resolveCustomerId, CUSTOMER_COOKIE } from '@/lib/customer';
+import { resolveTable, resolveCustomerId } from '@/lib/customer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,7 +41,5 @@ export async function POST(req: NextRequest) {
     prisma.coupon.create({ data: { tenantId: table.outlet.tenantId, customerId, code, rewardId: reward.id, status: 'issued', source: 'redeem', expiresAt: expires } }),
   ]);
 
-  const res = NextResponse.json({ ok: true, coupon: { code, name: reward.name }, balance: { points: updated.points, coins: updated.coins } });
-  res.cookies.set(CUSTOMER_COOKIE, customerId, { httpOnly: false, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 90 });
-  return res;
+  return NextResponse.json({ ok: true, coupon: { code, name: reward.name }, balance: { points: updated.points, coins: updated.coins } });
 }

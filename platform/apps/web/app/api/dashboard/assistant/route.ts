@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { formatINR } from '@cafeos/core';
 import { getSession } from '@/lib/auth';
 import { getDashboardData } from '@/lib/analytics';
+import { tenantHasFeature } from '@/lib/features';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -120,6 +121,10 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   if (session.role !== 'owner' && session.role !== 'manager')
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
+  // feature gate (G9): the AI assistant is a plan feature (Pro+)
+  if (!(await tenantHasFeature(session.tenantId, 'ai_assistant')))
+    return NextResponse.json({ error: 'feature_not_in_plan', feature: 'ai_assistant' }, { status: 402 });
 
   const parsed = Body.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ error: 'invalid' }, { status: 400 });

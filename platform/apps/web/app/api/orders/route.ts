@@ -7,6 +7,8 @@ import { applyRecipeConsumption, emitLowStockAlerts } from '@/lib/inventory';
 import { alertLargeDiscount } from '@/lib/alerts';
 import { getOutletGst, gstBillOptions } from '@/lib/tax';
 import { getOutletPwa } from '@/lib/pwa';
+import { assertSlot, bumpUsage, SlotExceeded } from '@/lib/limits';
+import { tenantBilling } from '@/lib/billing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,6 +39,23 @@ export async function POST(req: NextRequest) {
     include: { items: true, payments: true },
   });
   if (existing) return NextResponse.json({ order: existing, idempotent: true });
+
+  // slot enforcement (G6): meter session-bound orders against the monthly quota.
+  // Sessionless trusted replays are not metered (already-counted offline orders).
+  const meterTenantId = session?.tenantId ?? null;
+  if (meterTenantId) {
+    // billing wall (G7): a suspended/expired tenant cannot take new orders
+    const billing = await tenantBilling(meterTenantId);
+    if (billing.blocked) return NextResponse.json({ error: 'tenant_suspended', reason: billing.reason }, { status: 403 });
+    try {
+      await assertSlot(meterTenantId, 'orders_month');
+    } catch (e) {
+      if (e instanceof SlotExceeded) {
+        return NextResponse.json({ error: 'slot_exceeded', metric: e.metric, limit: e.limit, upsell: true }, { status: 402 });
+      }
+      throw e;
+    }
+  }
 
   // --- authoritative bill (server recomputes; client total is ignored) ---
   const billLines: BillLine[] = input.lines.map((l) => ({
@@ -158,6 +177,9 @@ export async function POST(req: NextRequest) {
 
       return created;
     });
+
+    // meter the committed order against the tenant's monthly quota (best effort)
+    if (meterTenantId) await bumpUsage(meterTenantId, 'orders_month').catch(() => {});
 
     // fan out to every KDS subscribed to this outlet
     publish(outletId, { type: 'order.new', ticket: toTicket(order) });

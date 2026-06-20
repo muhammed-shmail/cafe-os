@@ -30,6 +30,7 @@ The waiting time — currently dead, frustrating air — becomes the **single hi
 
 | # | Document | What's inside |
 |---|----------|---------------|
+| ★ | [ChayaOne — Platform Architecture](ChayaOne_Architecture.md) | As-built master overview: stack, RBAC, multi-tenancy, control plane, deployment |
 | 01 | [Product Requirements (PRD)](01-PRD.md) | Vision, personas, all modules, scope |
 | 02 | [Technical Architecture](02-TECH-ARCHITECTURE.md) | Stack, services, realtime, scaling, offline |
 | 03 | [Database Schema](03-DATABASE-SCHEMA.md) | PostgreSQL multi-tenant schema, all tables |
@@ -39,6 +40,7 @@ The waiting time — currently dead, frustrating air — becomes the **single hi
 | 07 | [UX Flows & Screen Hierarchy](07-UX-FLOWS.md) | Wireframes, navigation, 4 surfaces |
 | 08 | [Business: Pricing, GTM, Investor](08-BUSINESS.md) | SaaS tiers, competitive, go-to-market, pitch |
 | 09 | [Roadmap & MVP Prioritization](09-ROADMAP-MVP.md) | What ships first, phased plan |
+| 10 | [SaaS Control Plane](10-SAAS-CONTROL-PLANE.md) | Nuro7 platform layer: super-admin, subscriptions, slots, tenant isolation |
 
 ---
 

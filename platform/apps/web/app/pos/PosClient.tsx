@@ -392,15 +392,10 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-12 h-7 shrink-0 overflow-hidden flex items-center justify-center">
-              <video 
-                src="/intro.mp4" 
-                autoPlay 
-                loop 
-                muted 
-                playsInline 
+              <img
+                src="/logo chaya one.png"
+                alt="ChayaOne"
                 className="w-full h-full object-contain"
-                style={{ filter: 'brightness(1.22) contrast(1.2)', mixBlendMode: 'multiply', transform: 'scale(1.45)' }}
-                poster="/intro.gif"
               />
             </div>
             <span className="font-display font-bold text-[17px]">{(outlet.name.split('—')[0] ?? '').trim()}</span>

@@ -120,7 +120,7 @@ export default function LoginClient() {
     <main className="min-h-screen grid place-items-center p-6" style={{ background: 'radial-gradient(80% 60% at 50% 0%, rgba(232,144,42,.12), transparent 60%), var(--paper)' }}>
       <div className="w-full max-w-[360px]">
         <div className="text-center mb-7 flex flex-col items-center">
-          <BrandMark size={288} style={{ maxWidth: '84%' }} className="mb-1.5" />
+          <img src="/logo chaya one.png" alt="ChayaOne" style={{ width: 288, height: 'auto', maxWidth: '84%' }} className="mb-1.5 object-contain" />
           <AlphaTag />
           <h1 className="font-display text-[40px] leading-none mt-3.5">Kahwa House</h1>
           <p className="text-sm mt-2" style={{ color: 'var(--ink-3)' }}>Enter your staff PIN to open the till</p>

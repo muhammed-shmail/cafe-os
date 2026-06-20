@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@cafeos/db';
-import { resolveTable, activeOrderForTable, resolveCustomerId, CUSTOMER_COOKIE } from '@/lib/customer';
+import { resolveTable, activeOrderForTable, resolveCustomerId } from '@/lib/customer';
 import { QUICK_GAMES, QUICK_GAME_MAP, isQuickGameKey, coinsForScore, pointsForCoins } from '@/lib/games/registry';
 import { getOutletPwa, gameUnlocked, startOfTodayIST } from '@/lib/pwa';
 
@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
     return tx.customer.findUnique({ where: { id: customerId }, select: { points: true, coins: true } });
   });
 
-  const res = NextResponse.json({
+  return NextResponse.json({
     game: gameKey,
     awarded,
     coins,
@@ -110,8 +110,6 @@ export async function POST(req: NextRequest) {
     // tell the client whether a replay would pay out (drives the "practice round" hint)
     nextPlayPays: false,
   });
-  res.cookies.set(CUSTOMER_COOKIE, customerId, { httpOnly: false, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 90 });
-  return res;
 }
 
 /** GET — which quick games still have a paid play left this visit (for the hub). */

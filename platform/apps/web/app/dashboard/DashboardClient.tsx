@@ -1219,7 +1219,7 @@ export default function DashboardClient({
       {/* sidebar rail */}
       <aside className="hidden lg:flex flex-col gap-1 p-4 border-r" style={{ borderColor: 'var(--line)', background: 'var(--paper-2)' }}>
         <div className="flex items-center gap-2.5 px-2 py-3 mb-2">
-          <BrandMark size={104} className="shrink-0" style={{ margin: 0, maxWidth: '100%' }} />
+          <img src="/logo chaya one.png" alt="ChayaOne" style={{ width: 104, height: 'auto', margin: 0, maxWidth: '100%' }} className="shrink-0 object-contain" />
           <div className="leading-tight min-w-0">
             <b className="block text-sm truncate">{outlet.brand}</b>
             <span className="text-xs capitalize" style={{ color: 'var(--ink-3)' }}>{staff.role}</span>

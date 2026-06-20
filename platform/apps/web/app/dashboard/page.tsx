@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation';
 import { prisma } from '@cafeos/db';
 import { getSession } from '@/lib/auth';
 import { getDashboardData } from '@/lib/analytics';
+import { tenantBilling } from '@/lib/billing';
+import { BillingWall } from '@/components/BillingWall';
 import DashboardClient from './DashboardClient';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +24,10 @@ export default async function DashboardPage() {
     select: { id: true, name: true, gstin: true, tenant: { select: { name: true, plan: true } } },
   });
   if (!outlet) redirect('/api/auth/logout');
+
+  // billing wall: suspended / expired tenants get a read-only screen (data preserved)
+  const billing = await tenantBilling(session.tenantId);
+  if (billing.blocked) return <BillingWall brand={outlet.tenant.name} reason={billing.reason} />;
 
   const data = await getDashboardData(outlet.id);
 

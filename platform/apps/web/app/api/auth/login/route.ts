@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '@cafeos/db';
 import { signSession, SESSION_COOKIE } from '@/lib/auth';
+import { resolveTenantIdFromHost } from '@/lib/tenant';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,8 +21,14 @@ export async function POST(req: NextRequest) {
 
   const pinHash = createHash('sha256').update(parsed.data.pin).digest('hex');
 
+  // Scope the PIN lookup to the tenant for this host (kaava.chayaone.com → that
+  // tenant). PINs are only unique within a tenant, so a global lookup would
+  // collide across cafes. When the host resolves no tenant (e.g. local dev
+  // without DEV_TENANT_SUBDOMAIN) we fall back to a global lookup for convenience.
+  const tenantId = await resolveTenantIdFromHost(req.headers.get('host'));
+
   const staff = await prisma.staffUser.findFirst({
-    where: { pinHash, active: true },
+    where: { pinHash, active: true, ...(tenantId ? { tenantId } : {}) },
     select: { id: true, name: true, role: true, tenantId: true, outletId: true },
   });
 

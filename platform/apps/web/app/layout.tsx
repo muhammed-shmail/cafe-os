@@ -10,8 +10,12 @@ const body = Hanken_Grotesk({ subsets: ['latin'], weight: ['400', '500', '600', 
 const mono = DM_Mono({ subsets: ['latin'], weight: ['400', '500'], display: 'swap', variable: '--font-mono' });
 
 export const metadata: Metadata = {
-  title: 'Cafe OS',
-  description: 'The Growth Operating System for cafes.',
+  title: 'ChayaOne',
+  description: 'Order, earn points, and play — right from your table.',
+  applicationName: 'ChayaOne',
+  // installable PWA: iOS standalone + home-screen icons (icons are generated PNGs)
+  appleWebApp: { capable: true, statusBarStyle: 'default', title: 'ChayaOne' },
+  icons: { icon: '/fib icon.jpg', apple: '/fib icon.jpg' },
 };
 
 export const viewport: Viewport = {

@@ -1,27 +1,44 @@
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { prisma } from '@cafeos/db';
+import { resolveTenantIdFromHost } from './tenant';
+import { CUSTOMER_COOKIE, verifyCustomerSession } from './customer-auth';
 
 /**
  * Customer identity for the PWA.
  *
- * Phase 1 demo: we bind the visitor to the tenant's seeded customer ("Arjun")
- * so loyalty/rewards/spin are demonstrable end-to-end. Phase 2 replaces this
- * with phone-OTP issuing the cookie. The cookie is the only thing that changes.
+ * Phase 2: the `cafeos_cust` cookie is now a signed session (see
+ * `lib/customer-auth.ts`) issued by phone-OTP login — a raw UUID can no longer
+ * impersonate a customer. When no valid session is present we still fall back to
+ * the tenant's demo customer so loyalty/rewards/spin remain demonstrable for
+ * guests who haven't logged in (and the app works unchanged when the owner has
+ * registration disabled).
  */
-export const CUSTOMER_COOKIE = 'cafeos_cust';
+export { CUSTOMER_COOKIE };
 
-/** Resolve the current customer id (cookie if valid, else the demo customer). */
-export async function resolveCustomerId(tenantId: string): Promise<string | null> {
-  const fromCookie = cookies().get(CUSTOMER_COOKIE)?.value;
-  if (fromCookie) {
-    const ok = await prisma.customer.findFirst({ where: { id: fromCookie, tenantId }, select: { id: true } });
-    if (ok) return ok.id;
+/**
+ * Resolve the current customer + whether they are authenticated.
+ * `authenticated` is true only for a valid signed session; the demo fallback is
+ * never reported as authenticated (drives the registration gate honestly).
+ */
+export async function resolveCustomer(tenantId: string): Promise<{ id: string | null; authenticated: boolean }> {
+  const token = cookies().get(CUSTOMER_COOKIE)?.value;
+  if (token) {
+    const session = await verifyCustomerSession(token);
+    if (session && session.tid === tenantId) {
+      const ok = await prisma.customer.findFirst({ where: { id: session.sub, tenantId }, select: { id: true } });
+      if (ok) return { id: ok.id, authenticated: true };
+    }
   }
   const demo = await prisma.customer.findFirst({ where: { tenantId }, orderBy: { createdAt: 'asc' }, select: { id: true } });
-  return demo?.id ?? null;
+  return { id: demo?.id ?? null, authenticated: false };
 }
 
-/** Resolve a table + its outlet/tenant from a scanned QR token (or a fallback for the demo). */
+/** Resolve the current customer id (session if valid, else the demo customer). */
+export async function resolveCustomerId(tenantId: string): Promise<string | null> {
+  return (await resolveCustomer(tenantId)).id;
+}
+
+/** Resolve a table + its outlet/tenant from a scanned QR token (or a tenant-scoped fallback for the demo). */
 export async function resolveTable(qrToken?: string | null) {
   if (qrToken) {
     const t = await prisma.tableMap.findUnique({
@@ -30,13 +47,16 @@ export async function resolveTable(qrToken?: string | null) {
     });
     if (t) return t;
   }
-  // demo fallback: the table with the most recent active order, else T6, else first
+  // No valid token: fall back ONLY within the host's tenant — never across
+  // tenants (the previous global lookup could return another cafe's table).
+  const tenantId = await resolveTenantIdFromHost(headers().get('host'));
+  if (!tenantId) return null;
   const recent = await prisma.order.findFirst({
-    where: { status: { in: ['open', 'in_kitchen', 'ready'] }, tableId: { not: null } },
+    where: { status: { in: ['open', 'in_kitchen', 'ready'] }, tableId: { not: null }, outlet: { tenantId } },
     orderBy: { placedAt: 'desc' },
     select: { tableId: true },
   });
-  const where = recent?.tableId ? { id: recent.tableId } : { label: 'T6' };
+  const where = recent?.tableId ? { id: recent.tableId } : { label: 'T6', outlet: { tenantId } };
   return prisma.tableMap.findFirst({
     where,
     include: { outlet: { select: { id: true, name: true, tenantId: true } } },

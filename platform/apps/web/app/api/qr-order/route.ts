@@ -6,6 +6,7 @@ import { publish, toTicket } from '@/lib/realtime';
 import { createNotification } from '@/lib/notify';
 import { getOutletGst, gstBillOptions } from '@/lib/tax';
 import { getOutletPwa, walletPointsToPaise, paiseToPoints } from '@/lib/pwa';
+import { tenantBilling } from '@/lib/billing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,6 +29,10 @@ export async function POST(req: NextRequest) {
   if (!table) return NextResponse.json({ error: 'table_not_found' }, { status: 404 });
   const outletId = table.outlet.id;
   const tenantId = table.outlet.tenantId;
+
+  // billing wall (G7): suspended/expired tenants can't accept QR orders
+  const billing = await tenantBilling(tenantId);
+  if (billing.blocked) return NextResponse.json({ error: 'tenant_suspended' }, { status: 403 });
 
   // resolve requested items from the DB (never trust client prices)
   const wanted = new Map<string, number>();

@@ -50,6 +50,7 @@ export default function PwaClient({ qrToken }: { qrToken: string | null }) {
   const [toast, setToast] = useState<{ msg: string; emoji?: string } | null>(null);
   const [confetti, setConfetti] = useState(0);
   const [cart, setCart] = useState<Record<string, number>>({}); // itemId -> qty
+  const [entered, setEntered] = useState(false); // QR welcome shown until "Start Ordering"
 
   const qs = qrToken ? `?t=${encodeURIComponent(qrToken)}` : '';
 
@@ -73,6 +74,22 @@ export default function PwaClient({ qrToken }: { qrToken: string | null }) {
     return () => es.close();
   }, [qs]);
 
+  // register the installable PWA's service worker (production only — keeps dev clean)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production' && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+  }, []);
+
+  // QR welcome shows once per table session, then "Start Ordering" enters the app
+  useEffect(() => {
+    try { if (sessionStorage.getItem(`cw_entered_${qrToken ?? 'none'}`) === '1') setEntered(true); } catch {}
+  }, [qrToken]);
+  const startOrdering = useCallback(() => {
+    try { sessionStorage.setItem(`cw_entered_${qrToken ?? 'none'}`, '1'); } catch {}
+    setEntered(true);
+  }, [qrToken]);
+
   function flash(msg: string, emoji?: string) { setToast({ msg, emoji }); setTimeout(() => setToast(null), 2600); }
   function pop() { setConfetti((n) => n + 1); }
 
@@ -87,6 +104,16 @@ export default function PwaClient({ qrToken }: { qrToken: string | null }) {
       <style>{loadCss}</style>
     </Shell>
   );
+
+  // QR welcome / landing — cafe + table + offers, then "Start Ordering" enters.
+  if (!entered) {
+    return (
+      <Shell>
+        <Welcome ctx={ctx} onStart={startOrdering} />
+        <style>{css}</style>
+      </Shell>
+    );
+  }
 
   // Registration gate — only when the owner requires it and this device isn't
   // recognised yet. When disabled, this never shows (current behaviour).
@@ -141,6 +168,7 @@ function Home({ ctx, now, go, onUpsell, onPick }: { ctx: Ctx; now: number; go: (
   const pct = o ? ({ pending_approval: 8, approved: 32, open: 32, in_kitchen: 58, ready: 90, served: 100 }[o.status] ?? 8) : 0;
   const c = ctx.customer;
   const pwa = ctx.pwa;
+  const [pickOpen, setPickOpen] = useState(false);
 
   const trackBlock = o && o.status === 'cancelled' ? (
     <section className="track empty"><div className="et-glyph">🚫</div><p>Order #{o.number} was not confirmed</p><span>Please check with a waiter or place a new order.</span></section>
@@ -179,11 +207,19 @@ function Home({ ctx, now, go, onUpsell, onPick }: { ctx: Ctx; now: number; go: (
 
   return (
     <>
-      {pwa?.manualPick && <TablePicker token={ctx.table.token} />}
       <header className="pwa-top">
-        <div><span className="pwa-hi">Hi {c?.name ?? 'there'} 👋</span><span className="pwa-loc">{pwa?.welcome ?? `${ctx.outlet.name} · ${ctx.table.label}`}</span></div>
+        <div className="pwa-top-l">
+          <span className="pwa-hi">Hi {c?.name ?? 'there'} 👋</span>
+          {pwa?.welcome ? <span className="pwa-loc">{pwa.welcome}</span> : null}
+          <button className={`table-chip${pwa?.manualPick ? ' cta' : ''}`} onClick={() => setPickOpen(true)} aria-label={pwa?.manualPick ? 'Select your table' : 'Change table'}>
+            <span aria-hidden>📍 </span>
+            {pwa?.manualPick ? 'Select your table' : `Table ${ctx.table.label}`}
+            <span className="chip-change" aria-hidden>{pwa?.manualPick ? ' ▾' : ' · Change'}</span>
+          </button>
+        </div>
         {c && <span className="tier-ring"><b>{c.tier[0]?.toUpperCase()}</b></span>}
       </header>
+      <InstallButton />
       {pwa?.theme.heroTagline ? <p className="pwa-tag">{pwa.theme.heroTagline}</p> : null}
 
       {pwa?.gameUnlock?.unlocked && (
@@ -198,6 +234,7 @@ function Home({ ctx, now, go, onUpsell, onPick }: { ctx: Ctx; now: number; go: (
 
       <section className="offer-card"><span className="of-emoji">🍫</span><div><b>Add a Brownie</b><span>₹99 · slip it in now</span></div><button onClick={onUpsell}>Add</button></section>
       <div className="quick"><button onClick={() => go('play')}><span>◉</span>Play</button><button onClick={() => go('rewards')}><span>★</span>Rewards</button></div>
+      {pickOpen && <TableSheet token={ctx.table.token} onClose={() => setPickOpen(false)} />}
     </>
   );
 }
@@ -246,24 +283,53 @@ function Featured({ list, onPick }: { list: PwaFeatured[]; onPick: (id: string) 
 }
 
 /* manual table picker (QR had no table info) */
-function TablePicker({ token }: { token: string }) {
+/* Bottom-sheet table selector — opened from the header chip. QR scan stays the
+   primary path; this is the "select / switch table" button the guest can tap. */
+function TableSheet({ token, onClose }: { token: string; onClose: () => void }) {
   const [tables, setTables] = useState<{ token: string; label: string }[]>([]);
-  const [prefix, setPrefix] = useState('Welcome to Table');
   useEffect(() => {
-    fetch(`/api/customer/tables?t=${encodeURIComponent(token)}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) { setTables(d.tables ?? []); setPrefix(d.welcomePrefix ?? 'Welcome to Table'); } }).catch(() => {});
+    fetch(`/api/customer/tables?t=${encodeURIComponent(token)}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) setTables(d.tables ?? []); }).catch(() => {});
   }, [token]);
-  if (!tables.length) return null;
   return (
-    <section className="tablepick">
-      <b>Which table are you at?</b>
-      <span>{prefix.replace(/table/i, '').trim() || 'Pick your table to start ordering'}</span>
-      <div className="tp-grid">
-        {tables.map((t) => (
-          <a key={t.token} href={`/app?t=${encodeURIComponent(t.token)}`} className="tp-btn">{t.label}</a>
-        ))}
+    <div className="sheet-back" onClick={onClose} role="dialog" aria-modal="true">
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <span className="sheet-grab" />
+        <b className="sheet-title">Select your table</b>
+        <span className="sheet-sub">Scan a table’s QR code, or tap your table below.</span>
+        <div className="tp-grid">
+          {tables.map((t) => (
+            <a key={t.token} href={`/app?t=${encodeURIComponent(t.token)}`} className={`tp-btn${t.token === token ? ' on' : ''}`}>{t.label}</a>
+          ))}
+        </div>
+        {!tables.length && <span className="sheet-sub">No tables found — please scan the QR on your table.</span>}
       </div>
-    </section>
+    </div>
   );
+}
+
+/* "Install app" / "Add to Home Screen" — shows the native prompt where supported,
+   or iOS Share-sheet instructions on iPhone. Hidden when already installed. */
+function InstallButton() {
+  const [deferred, setDeferred] = useState<{ prompt: () => void; userChoice: Promise<unknown> } | null>(null);
+  const [ios, setIos] = useState(false);
+  useEffect(() => {
+    const onBip = (e: Event) => { e.preventDefault(); setDeferred(e as unknown as { prompt: () => void; userChoice: Promise<unknown> }); };
+    window.addEventListener('beforeinstallprompt', onBip);
+    const ua = navigator.userAgent || '';
+    const isIos = /iphone|ipad|ipod/i.test(ua);
+    const standalone = (navigator as unknown as { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+    if (isIos && !standalone) setIos(true);
+    return () => window.removeEventListener('beforeinstallprompt', onBip);
+  }, []);
+  if (deferred) {
+    return (
+      <button className="install-btn" onClick={async () => { deferred.prompt(); await deferred.userChoice; setDeferred(null); }}>
+        ⬇ Install this app
+      </button>
+    );
+  }
+  if (ios) return <div className="install-hint">📲 Install: tap <b>Share</b> then <b>“Add to Home Screen”</b></div>;
+  return null;
 }
 
 /* ---------------- Order (self-serve QR menu + cart) ---------------- */
@@ -437,53 +503,165 @@ function Rewards({ ctx, qs, onRedeem, reload }: { ctx: Ctx; qs: string; onRedeem
   );
 }
 
-/* ---------------- Registration (name + mobile, no OTP) ---------------- */
+/* ---------------- Onboarding (3-step OTP login) ----------------
+   1. mobile number → request a one-time code (dev-scaffold sender)
+   2. enter code → verify; returning customers are auto-logged-in here
+   3. name → only for brand-new customers (and only when the owner collects it) */
 function Register({ cfg, outlet, welcome, qrToken, onDone }: { cfg: { enabled: boolean; collectName: boolean }; outlet: string; welcome: string; qrToken: string | null; onDone: () => void }) {
-  const [name, setName] = useState('');
+  const [step, setStep] = useState<'phone' | 'otp' | 'name'>('phone');
   const [phone, setPhone] = useState('');
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [devCode, setDevCode] = useState<string | null>(null);
 
-  async function submit() {
+  const fingerprint = () => (typeof navigator !== 'undefined' ? `${navigator.userAgent}|${typeof screen !== 'undefined' ? `${screen.width}x${screen.height}` : ''}` : '');
+
+  async function start() {
     setErr(null);
-    if (cfg.collectName && !name.trim()) return setErr('Please enter your name');
     if (phone.replace(/\D/g, '').length < 8) return setErr('Enter a valid mobile number');
     setBusy(true);
     try {
-      const fingerprint = typeof navigator !== 'undefined' ? `${navigator.userAgent}|${typeof screen !== 'undefined' ? `${screen.width}x${screen.height}` : ''}` : '';
-      const res = await fetch('/api/customer/register', {
+      const res = await fetch('/api/customer/otp/start', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ t: qrToken || undefined, phone, name: name.trim() || undefined, fingerprint }),
+        body: JSON.stringify({ t: qrToken || undefined, phone }),
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error === 'invalid_phone' ? 'Enter a valid mobile number' : 'Could not register'); }
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error === 'invalid_phone' ? 'Enter a valid mobile number' : 'Could not send code');
+      setDevCode(typeof d.devCode === 'string' ? d.devCode : null);
+      setCode('');
+      setStep('otp');
+    } catch (e: any) { setErr(e.message || 'Something went wrong'); }
+    finally { setBusy(false); }
+  }
+
+  async function verify() {
+    setErr(null);
+    if (code.replace(/\D/g, '').length < 6) return setErr('Enter the 6-digit code');
+    setBusy(true);
+    try {
+      const res = await fetch('/api/customer/otp/verify', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ t: qrToken || undefined, phone, code, fingerprint: fingerprint() }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (d.error === 'invalid_code') throw new Error(typeof d.remaining === 'number' ? `Incorrect code — ${d.remaining} ${d.remaining === 1 ? 'try' : 'tries'} left` : 'Incorrect code');
+        if (d.error === 'otp_expired' || d.error === 'too_many_attempts') { setStep('phone'); setCode(''); throw new Error('That code expired — request a new one'); }
+        if (d.error === 'slot_exceeded') throw new Error('This cafe has reached its customer limit. Please ask staff.');
+        throw new Error('Could not verify code');
+      }
+      if (d.needsName && cfg.collectName) setStep('name');
+      else onDone(); // returning customer (or name not collected) → straight in
+    } catch (e: any) { setErr(e.message || 'Something went wrong'); }
+    finally { setBusy(false); }
+  }
+
+  async function saveName() {
+    setErr(null);
+    if (!name.trim()) return setErr('Please enter your name');
+    setBusy(true);
+    try {
+      const res = await fetch('/api/customer/profile', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (!res.ok) throw new Error('Could not save your name');
       onDone();
     } catch (e: any) { setErr(e.message || 'Something went wrong'); setBusy(false); }
   }
 
   return (
     <div className="reg">
-      <BrandMark size={120} />
+      <img src="/logo chaya one.png" alt="ChayaOne" style={{ width: 120, height: 120, objectFit: 'contain' }} />
       <AlphaTag />
-      <h2 className="reg-h">{welcome || `Welcome to ${outlet}`}</h2>
-      <p className="reg-sub">Tell us who you are to earn points, rewards and play games.</p>
-      <div className="reg-form">
-        {cfg.collectName && (
-          <label className="reg-field"><span>Your name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Arjun" autoComplete="name" aria-invalid={!!err && !name.trim()} /></label>
-        )}
-        <label className="reg-field"><span>Mobile number</span><input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" autoComplete="tel" placeholder="9876543210" aria-invalid={!!err} aria-describedby={err ? 'reg-err' : undefined} /></label>
-        {err && <p className="reg-err" id="reg-err" role="alert">{err}</p>}
-        <button className="reg-btn" disabled={busy} onClick={submit}>{busy ? 'Just a sec…' : 'Continue'}</button>
-        <span className="reg-fine">We use your number only to recognise you and save your rewards.</span>
-      </div>
+
+      {step === 'phone' && (
+        <>
+          <h2 className="reg-h">{welcome || `Welcome to ${outlet}`}</h2>
+          <p className="reg-sub">Enter your mobile number to earn points, rewards and play games.</p>
+          <div className="reg-form">
+            <label className="reg-field"><span>Mobile number</span><input value={phone} onChange={(e) => setPhone(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && start()} type="tel" inputMode="tel" autoComplete="tel" placeholder="9876543210" aria-invalid={!!err} aria-describedby={err ? 'reg-err' : undefined} /></label>
+            {err && <p className="reg-err" id="reg-err" role="alert">{err}</p>}
+            <button className="reg-btn" disabled={busy} onClick={start}>{busy ? 'Sending…' : 'Send code'}</button>
+            <span className="reg-fine">We’ll text you a one-time code to confirm it’s you.</span>
+          </div>
+        </>
+      )}
+
+      {step === 'otp' && (
+        <>
+          <h2 className="reg-h">Enter your code</h2>
+          <p className="reg-sub">We sent a 6-digit code to {phone}.</p>
+          <div className="reg-form">
+            <label className="reg-field"><span>6-digit code</span><input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} onKeyDown={(e) => e.key === 'Enter' && verify()} type="tel" inputMode="numeric" autoComplete="one-time-code" placeholder="123456" aria-invalid={!!err} aria-describedby={err ? 'reg-err' : undefined} /></label>
+            {devCode && <p className="reg-dev">Dev code: <b>{devCode}</b></p>}
+            {err && <p className="reg-err" id="reg-err" role="alert">{err}</p>}
+            <button className="reg-btn" disabled={busy} onClick={verify}>{busy ? 'Verifying…' : 'Verify & continue'}</button>
+            <div className="reg-actions">
+              <button type="button" className="reg-link" onClick={() => { setErr(null); setCode(''); setStep('phone'); }}>Change number</button>
+              <button type="button" className="reg-link" disabled={busy} onClick={start}>Resend code</button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {step === 'name' && (
+        <>
+          <h2 className="reg-h">Almost there</h2>
+          <p className="reg-sub">What should we call you?</p>
+          <div className="reg-form">
+            <label className="reg-field"><span>Your name</span><input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveName()} autoComplete="name" placeholder="e.g. Arjun" aria-invalid={!!err && !name.trim()} /></label>
+            {err && <p className="reg-err" id="reg-err" role="alert">{err}</p>}
+            <button className="reg-btn" disabled={busy} onClick={saveName}>{busy ? 'Saving…' : 'Finish'}</button>
+            <span className="reg-fine">You can update this anytime.</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 /* ---------------- frame + fx ---------------- */
+/* QR welcome / landing — the first thing a guest sees after scanning their table
+   QR. Cafe identity + table (auto-detected) + today's offers + Start Ordering. */
+function Welcome({ ctx, onStart }: { ctx: Ctx; onStart: () => void }) {
+  const pwa = ctx.pwa;
+  const logo = pwa?.theme.logoUrl ?? '/logo chaya one.png';
+  const banners = pwa?.banners ?? [];
+  return (
+    <div className="welcome">
+      <div className="wl-top">
+        <div className="wl-logo" style={{ backgroundImage: `url(${logo})` }} />
+        <h1 className="wl-cafe">{ctx.outlet.name}</h1>
+        {pwa?.theme.heroTagline ? <p className="wl-tag">{pwa.theme.heroTagline}</p> : null}
+        <span className="wl-table">📍 Table {ctx.table.label}</span>
+      </div>
+
+      {banners.length > 0 && (
+        <div className="wl-offers">
+          <span className="wl-offers-h">Today’s offers</span>
+          <div className="wl-offers-row">
+            {banners.slice(0, 5).map((b) => (
+              <div key={b.id} className="wl-offer" style={{ backgroundImage: `url(${b.imageUrl})` }}>
+                <span>{b.title}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button className="wl-start" onClick={onStart}>Start Ordering →</button>
+      <span className="wl-foot">You’re seated at {ctx.outlet.name}</span>
+    </div>
+  );
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="pwa-stage">
-      <div className="phone"><div className="phone-notch" />{children}</div>
+      <div className="phone">{children}</div>
       <style>{shellCss}</style>
     </main>
   );
@@ -515,50 +693,47 @@ const loadCss = `
 `;
 
 const shellCss = `
-.pwa-stage { 
-  min-height: 100vh; 
-  display: grid; 
-  place-items: center; 
-  padding: 24px; 
-  background: radial-gradient(120% 120% at 50% 0%, color-mix(in srgb, var(--turmeric) 14%, transparent) 0%, color-mix(in srgb, var(--clay) 5%, transparent) 40%, var(--paper) 100%); 
+/* Mobile-first: the app IS the screen — no fake phone frame, edge-to-edge. */
+.pwa-stage {
+  min-height: 100svh;
+  display: flex;
+  justify-content: center;
+  background: var(--paper);
 }
-.phone { 
-  position: relative; 
-  width: 400px; 
-  max-width: 100%; 
-  height: 820px; 
-  max-height: 92vh; 
-  background: linear-gradient(145deg, #1d120a, #0d0704); 
-  border-radius: 48px; 
-  padding: 12px; 
-  box-shadow: 
-    0 35px 80px rgba(39, 20, 8, 0.4), 
-    0 10px 30px rgba(0, 0, 0, 0.25), 
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-    inset 0 0 16px rgba(0, 0, 0, 0.8); 
-  border: 1px solid rgba(255, 255, 255, 0.03);
+.phone {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  height: 100svh;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.phone-notch { 
-  position: absolute; 
-  top: 14px; 
-  left: 50%; 
-  transform: translateX(-50%); 
-  width: 110px; 
-  height: 24px; 
-  background: #0d0704; 
-  border-radius: 12px; 
-  z-index: 5; 
-  box-shadow: inset 0 0 4px rgba(0,0,0,0.6);
+.pwa-screen {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--paper);
 }
-.pwa-screen { 
-  position: relative; 
-  height: 100%; 
-  border-radius: 36px; 
-  overflow: hidden; 
-  background: var(--paper); 
-  display: flex; 
-  flex-direction: column; 
-  border: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+/* Desktop adapts FROM mobile: float the same column as a clean card (not a phone mockup). */
+@media (min-width: 600px) {
+  .pwa-stage {
+    align-items: center;
+    padding: 24px;
+    min-height: 100vh;
+    background: radial-gradient(120% 120% at 50% 0%, color-mix(in srgb, var(--turmeric) 12%, transparent) 0%, color-mix(in srgb, var(--clay) 4%, transparent) 40%, var(--paper) 100%);
+  }
+  .phone {
+    height: 880px;
+    max-height: 92vh;
+    border-radius: 28px;
+    border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+    box-shadow: var(--sh-3);
+  }
+  .pwa-screen { border-radius: 28px; }
 }
 `;
 
@@ -629,6 +804,41 @@ const css = `
   box-shadow: 0 2px 8px rgba(201, 154, 46, 0.4);
 }
 .nav-badge { position: absolute; top: 6px; left: 50%; margin-left: 6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 99px; background: var(--clay); color: #fff; font-size: 9.5px; font-weight: 800; font-style: normal; display: grid; place-items: center; }
+
+/* table chip (header) + table bottom-sheet + install button */
+.pwa-top-l { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.table-chip { align-self: flex-start; display: inline-flex; align-items: center; max-width: 100%; margin-top: 2px; padding: 5px 11px; border-radius: 99px; background: color-mix(in srgb, var(--gold) 14%, transparent); border: 1px solid color-mix(in srgb, var(--gold-d) 38%, transparent); color: var(--ink-2); font-size: 12px; font-weight: 700; font-family: var(--font-body); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.table-chip.cta { background: var(--gold); color: var(--espresso); border-color: var(--gold-d); animation: chipPulse 1.9s ease-in-out infinite; }
+@keyframes chipPulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--gold) 55%, transparent); } 60% { box-shadow: 0 0 0 7px transparent; } }
+.install-btn { width: 100%; padding: 11px; border-radius: 14px; background: var(--gold); color: var(--espresso); border: 1px solid var(--gold-d); font-weight: 800; font-size: 14px; font-family: var(--font-body); cursor: pointer; box-shadow: var(--sh-1); }
+.install-hint { font-size: 12.5px; color: var(--ink-2); background: color-mix(in srgb, var(--gold) 12%, transparent); border: 1px solid color-mix(in srgb, var(--gold-d) 32%, transparent); border-radius: 12px; padding: 9px 12px; text-align: center; }
+.sheet-back { position: absolute; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.42); display: flex; align-items: flex-end; animation: fadeIn 0.2s ease; }
+.sheet { width: 100%; background: var(--paper); border-radius: 24px 24px 0 0; padding: 12px 16px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 6px; box-shadow: 0 -12px 44px rgba(0, 0, 0, 0.28); animation: sheetUp 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.sheet-grab { width: 40px; height: 4px; border-radius: 99px; background: var(--line-2); align-self: center; margin-bottom: 6px; }
+.sheet-title { font-family: var(--font-display); font-size: 18px; font-weight: 600; }
+.sheet-sub { font-size: 12.5px; color: var(--ink-3); margin-bottom: 6px; }
+.tp-btn.on { background: var(--gold); color: var(--espresso); border-color: var(--gold-d); }
+.chip-change { opacity: 0.72; font-weight: 700; }
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* QR welcome / landing screen */
+.welcome { height: 100%; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; padding: calc(44px + env(safe-area-inset-top)) 22px calc(26px + env(safe-area-inset-bottom)); background: radial-gradient(82% 46% at 50% 0%, color-mix(in srgb, var(--turmeric) 15%, transparent), transparent 70%), var(--paper); animation: tabFadeIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.wl-top { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 7px; margin-top: 6px; }
+.wl-logo { width: 96px; height: 96px; border-radius: 26px; background-size: cover; background-position: center; box-shadow: var(--sh-2); display: grid; place-items: center; }
+.wl-logo-fb { background: var(--paper-2); border: 1px solid var(--line); }
+.wl-cafe { font-family: var(--font-display); font-size: 30px; font-weight: 600; line-height: 1.12; margin-top: 8px; }
+.wl-tag { font-size: 13.5px; color: var(--ink-3); max-width: 300px; line-height: 1.4; }
+.wl-table { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; padding: 7px 15px; border-radius: 99px; background: color-mix(in srgb, var(--gold) 16%, transparent); border: 1px solid color-mix(in srgb, var(--gold-d) 42%, transparent); color: var(--ink-2); font-size: 13px; font-weight: 800; }
+.wl-offers { display: flex; flex-direction: column; gap: 9px; }
+.wl-offers-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
+.wl-offers-row { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x mandatory; }
+.wl-offers-row::-webkit-scrollbar { height: 0; }
+.wl-offer { flex: 0 0 72%; height: 98px; border-radius: 16px; background-size: cover; background-position: center; display: flex; align-items: flex-end; padding: 10px; box-shadow: var(--sh-1); scroll-snap-align: start; background-color: var(--paper-3); }
+.wl-offer span { font-size: 13px; font-weight: 800; color: #fff; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.65); }
+.wl-start { margin-top: auto; width: 100%; min-height: 52px; padding: 16px; border-radius: 18px; background: var(--gold); color: var(--espresso); border: 1px solid var(--gold-d); font-family: var(--font-body); font-weight: 800; font-size: 16px; cursor: pointer; box-shadow: var(--sh-2); transition: transform 0.15s ease; }
+.wl-start:active { transform: scale(0.98); }
+.wl-foot { text-align: center; font-size: 11.5px; color: var(--ink-3); }
 
 .ord-list { display: flex; flex-direction: column; gap: 16px; }
 .ord-cat-h { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); margin-top: 10px; margin-bottom: 6px; }
@@ -735,6 +945,10 @@ const css = `
 .reg-btn:active { transform: scale(.99); }
 .reg-btn:disabled { opacity: .7; cursor: default; }
 .reg-fine { font-size: 10.5px; color: var(--ink-3); line-height: 1.5; }
+.reg-dev { font-size: 11px; color: var(--ink-2); background: color-mix(in srgb, var(--gold) 12%, transparent); border: 1px dashed var(--gold-d); border-radius: 10px; padding: 6px 8px; }
+.reg-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 2px; }
+.reg-link { background: none; border: none; color: var(--ink-2); font-size: 12px; font-weight: 700; cursor: pointer; padding: 4px; text-decoration: underline; }
+.reg-link:disabled { opacity: .5; cursor: default; }
 
 /* manual table picker */
 .tablepick { background: color-mix(in srgb, var(--paper-3) 75%, transparent); backdrop-filter: blur(8px); border: 1px solid color-mix(in srgb, var(--line) 40%, transparent); border-radius: 20px; padding: 16px; display: grid; gap: 4px; box-shadow: var(--sh-1); }

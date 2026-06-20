@@ -6,12 +6,17 @@
  * Run:  npm run db:seed   (after db:push / db:migrate)
  */
 import { PrismaClient, StaffRole, Station, TableState, Tier } from '@prisma/client';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, scryptSync } from 'node:crypto';
 
 const prisma = new PrismaClient();
 
 const pin = (p: string) => createHash('sha256').update(p).digest('hex');
 const phoneHash = (p: string) => createHash('sha256').update(p).digest('hex');
+// Matches apps/web/lib/platform-crypto.ts hashPassword() format: scrypt$salt$key.
+const adminPw = (pw: string) => {
+  const salt = randomBytes(16);
+  return `scrypt$${salt.toString('hex')}$${scryptSync(pw, salt, 64).toString('hex')}`;
+};
 
 type Seed = {
   cat: string;
@@ -51,14 +56,57 @@ const MENU: Seed[] = [
   { cat: 'Desserts', name: 'Gulab Jamun Cheesecake', pricePaise: 19000, gst: 18, station: 'dessert', tags: ['veg'] },
 ];
 
+// Control-plane plan catalogue (global, not tenant-scoped). null limit = unlimited.
+const PLANS = [
+  { key: 'starter', name: 'Starter', maxBranches: 1, maxStaff: 5, maxCustomers: 1000, maxOrdersMonthly: 2000, storageMb: 500,
+    features: { whatsapp: false, ai_assistant: false, white_label: false }, pricePaise: { monthly: 99900, yearly: 999000 } },
+  { key: 'growth', name: 'Growth', maxBranches: 3, maxStaff: 20, maxCustomers: 5000, maxOrdersMonthly: 10000, storageMb: 2000,
+    features: { whatsapp: true, ai_assistant: false, white_label: false }, pricePaise: { monthly: 249900, yearly: 2499000 } },
+  { key: 'pro', name: 'Pro', maxBranches: 10, maxStaff: 100, maxCustomers: 50000, maxOrdersMonthly: 100000, storageMb: 10000,
+    features: { whatsapp: true, ai_assistant: true, white_label: false }, pricePaise: { monthly: 499900, yearly: 4999000 } },
+  { key: 'enterprise', name: 'Enterprise', maxBranches: null, maxStaff: null, maxCustomers: null, maxOrdersMonthly: null, storageMb: null,
+    features: { whatsapp: true, ai_assistant: true, white_label: true }, pricePaise: {} },
+] as const;
+
 async function main() {
   console.log('🌱  Seeding Cafe OS…');
+
+  // Plan catalogue — upsert so it survives tenant re-seeds (not tenant-scoped).
+  for (const p of PLANS) {
+    await prisma.planDefinition.upsert({
+      where: { key: p.key },
+      create: { ...p },
+      update: { ...p },
+    });
+  }
+
+  // Bootstrap Nuro7 super-admin (control plane). update:{} preserves an existing
+  // password / enrolled 2FA across re-seeds.
+  await prisma.platformAdmin.upsert({
+    where: { email: 'admin@nuro7.com' },
+    create: { email: 'admin@nuro7.com', name: 'Nuro7 Admin', role: 'super_admin', passwordHash: adminPw('admin1234') },
+    update: {},
+  });
 
   // wipe (dev only) — order matters for FKs; cascade handles children
   await prisma.tenant.deleteMany({});
 
   const tenant = await prisma.tenant.create({
-    data: { name: 'Kahwa House', plan: 'growth', gstin: '29ABCDE1234F1Z5' },
+    data: { name: 'Kahwa House', subdomain: 'kahwa', plan: 'growth', gstin: '29ABCDE1234F1Z5' },
+  });
+
+  // Active subscription on the Growth plan + slot meters, so the control plane
+  // has something real to govern from day one.
+  const growthPlan = await prisma.planDefinition.findUniqueOrThrow({ where: { key: 'growth' } });
+  await prisma.subscription.create({
+    data: {
+      tenantId: tenant.id,
+      planId: growthPlan.id,
+      period: 'monthly',
+      status: 'active',
+      currentStart: new Date(),
+      currentEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    },
   });
 
   const outlet = await prisma.outlet.create({
@@ -156,8 +204,18 @@ async function main() {
     },
   });
 
-  console.log(`✅  Seeded tenant=${tenant.id} outlet=${outlet.id}`);
+  // usage meters so slot enforcement reflects the seeded data
+  await prisma.usageCounter.createMany({
+    data: [
+      { tenantId: tenant.id, metric: 'branches', value: 1 },
+      { tenantId: tenant.id, metric: 'staff', value: 3 },
+      { tenantId: tenant.id, metric: 'customers', value: 1 },
+    ],
+  });
+
+  console.log(`✅  Seeded tenant=${tenant.id} outlet=${outlet.id} subdomain=kahwa`);
   console.log(`    Staff PINs → Owner 1111 · Cashier 2222 · Kitchen 3333`);
+  console.log(`    Super-admin → admin@nuro7.com / admin1234  (set DEV_TENANT_SUBDOMAIN=kahwa for local)`);
 }
 
 main()

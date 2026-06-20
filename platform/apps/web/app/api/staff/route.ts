@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { prisma, type Prisma, type StaffRole } from '@cafeos/db';
 import { getSession } from '@/lib/auth';
 import { canManageStaff, assignableRoles, canManageTarget, ALL_ROLES } from '@/lib/rbac';
+import { assertSlot, bumpUsage, SlotExceeded } from '@/lib/limits';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,6 +51,14 @@ export async function POST(req: NextRequest) {
     const clash = await prisma.staffUser.findFirst({ where: { pinHash }, select: { id: true } });
     if (clash) return NextResponse.json({ error: 'pin_in_use' }, { status: 409 });
 
+    // slot enforcement (G6): staff seats per plan
+    try {
+      await assertSlot(session.tenantId, 'staff');
+    } catch (e) {
+      if (e instanceof SlotExceeded) return NextResponse.json({ error: 'slot_exceeded', metric: e.metric, limit: e.limit, upsell: true }, { status: 402 });
+      throw e;
+    }
+
     const created = await prisma.staffUser.create({
       data: {
         tenantId: session.tenantId,
@@ -63,6 +72,7 @@ export async function POST(req: NextRequest) {
       },
       select: { id: true, name: true, role: true, phone: true, active: true, employeeCode: true, payType: true, payRatePaise: true },
     });
+    await bumpUsage(session.tenantId, 'staff').catch(() => {});
     await audit(session, 'staff.created', created.id, { name: created.name, role: created.role });
     return NextResponse.json({ ok: true, member: { ...created, hasPin: true } });
   }

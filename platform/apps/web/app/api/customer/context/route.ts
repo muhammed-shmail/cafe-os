@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@cafeos/db';
-import { resolveTable, activeOrderForTable, resolveCustomerId, CUSTOMER_COOKIE } from '@/lib/customer';
+import { resolveTable, activeOrderForTable, resolveCustomer } from '@/lib/customer';
 import { readPwaConfig, gameUnlocked, tierForCustomer, walletPointsToPaise } from '@/lib/pwa';
 
 export const runtime = 'nodejs';
@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
   if (!table) return NextResponse.json({ error: 'table_not_found' }, { status: 404 });
 
   const tenantId = table.outlet.tenantId;
-  const customerId = await resolveCustomerId(tenantId);
+  const { id: customerId, authenticated } = await resolveCustomer(tenantId);
 
   const [order, customer, rewards, categories, outletRow] = await Promise.all([
     activeOrderForTable(table.id),
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
   // PWA behaves exactly as before.
   const cfg = readPwaConfig(outletRow?.settings);
   const resolved = !!t && table.qrToken === t; // QR matched a real table vs demo fallback
-  const registered = req.cookies.get(CUSTOMER_COOKIE)?.value === customerId && !!customerId;
+  const registered = authenticated; // a valid signed session, not a spoofable cookie==id check
   const featIds = cfg.featured.map((f) => f.itemId);
   const featRows = featIds.length
     ? await prisma.menuItem.findMany({ where: { id: { in: featIds }, outletId: table.outlet.id, isAvailable: true }, select: { id: true, name: true, pricePaise: true, imageUrl: true } })
@@ -144,9 +144,8 @@ export async function GET(req: NextRequest) {
     spinsLeft,
   });
 
-  if (customerId) {
-    res.cookies.set(CUSTOMER_COOKIE, customerId, { httpOnly: false, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 90 });
-  }
+  // The session cookie is issued only by the auth routes (/otp/verify, /register);
+  // context never (re)writes it — re-setting a raw id here would clobber the session.
   return res;
 }
 

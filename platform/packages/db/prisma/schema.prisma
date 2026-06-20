@@ -149,6 +149,9 @@ enum Channel {
 model Tenant {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
+  // Subdomain slug for runtime tenant resolution (kaava.chayaone.com → "kaava").
+  // Nullable so the additive migration is safe on existing rows; the seed sets it.
+  subdomain String?  @unique
   plan      Plan     @default(starter)
   gstin     String?
   status    String   @default("active")
@@ -165,6 +168,12 @@ model Tenant {
   badges     Badge[]
   segments   Segment[]
   campaigns  Campaign[]
+
+  // Control plane (Phase G) — all optional/additive back-relations.
+  subscription Subscription?
+  branding     TenantBranding?
+  usage        UsageCounter[]
+  tickets      SupportTicket[]
 
   @@map("tenants")
 }
@@ -1002,4 +1011,208 @@ model Notification {
   @@index([outletId, createdAt])
   @@index([outletId, type, entityId, readAt])
   @@map("notifications")
+}
+
+// ===================== CONTROL PLANE (Nuro7 — Phase G) =====================
+// Additive. Nuro7 operates these tables ABOVE all tenants; they are not
+// tenant-scoped (no RLS) except the tenant-linked ones (tenant_branding,
+// support_tickets, ticket_messages, sub_invoices). Money stays integer paise.
+
+enum PlatformRole {
+  super_admin
+  support
+  billing
+  readonly
+}
+
+enum BillingPeriod {
+  monthly
+  quarterly
+  half_yearly
+  yearly
+}
+
+enum SubStatus {
+  trialing
+  active
+  past_due
+  suspended
+  cancelled
+  expired
+}
+
+enum TicketStatus {
+  open
+  in_progress
+  waiting
+  resolved
+  closed
+}
+
+// Level-1 platform owner. Separate identity from StaffUser — never shares a
+// table or a JWT secret. Password (argon2/bcrypt, NOT a 4-digit PIN) + TOTP.
+model PlatformAdmin {
+  id           String       @id @default(uuid()) @db.Uuid
+  email        String       @unique
+  name         String
+  passwordHash String
+  role         PlatformRole @default(super_admin)
+  totpSecret   String? // base32 secret; set during 2FA enrolment
+  totpEnabled  Boolean      @default(false)
+  active       Boolean      @default(true)
+  lastLoginAt  DateTime?    @db.Timestamptz(6)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+
+  actions PlatformAudit[]
+  tickets SupportTicket[] @relation("AssignedAdmin")
+
+  @@map("platform_admins")
+}
+
+// A plan is a template of limits + features. Editable by Super Admin → no code
+// deploy to launch a tier or change a quota. null limit = unlimited (Enterprise).
+model PlanDefinition {
+  id               String  @id @default(uuid()) @db.Uuid
+  key              Plan    @unique // reuse existing Plan enum
+  name             String
+  maxBranches      Int?
+  maxStaff         Int?
+  maxCustomers     Int?
+  maxOrdersMonthly Int?
+  storageMb        Int?
+  features         Json    @default("{}") // { "whatsapp": true, "ai_assistant": false, ... }
+  pricePaise       Json    @default("{}") // { "monthly": 99900, "yearly": 999000 }
+  active           Boolean @default(true)
+
+  subscriptions Subscription[]
+
+  @@map("plan_definitions")
+}
+
+model Subscription {
+  id            String        @id @default(uuid()) @db.Uuid
+  tenantId      String        @unique @db.Uuid // one active subscription per tenant
+  planId        String        @db.Uuid
+  period        BillingPeriod @default(monthly)
+  status        SubStatus     @default(trialing)
+  trialEndsAt   DateTime?     @db.Timestamptz(6)
+  currentStart  DateTime      @default(now()) @db.Timestamptz(6)
+  currentEnd    DateTime?     @db.Timestamptz(6)
+  slotOverrides Json          @default("{}") // per-tenant grants on top of the plan, e.g. { "maxBranches": 4 }
+  gateway       String? // "razorpay" — reserved for the later billing phase
+  gatewaySubId  String?
+  cancelAt      DateTime?     @db.Timestamptz(6)
+  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan     PlanDefinition @relation(fields: [planId], references: [id])
+  invoices SubInvoice[]
+
+  @@index([status, currentEnd])
+  @@map("subscriptions")
+}
+
+model SubInvoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  subscriptionId String        @db.Uuid
+  amountPaise    Int
+  period         BillingPeriod
+  status         String // draft|issued|paid|failed|refunded (manual in this phase)
+  gatewayRef     String?
+  issuedAt       DateTime      @default(now()) @db.Timestamptz(6)
+  paidAt         DateTime?     @db.Timestamptz(6)
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@map("sub_invoices")
+}
+
+// Cheap, queryable usage meters so slot checks never scan huge tables on the hot
+// path. Incremented in the same transaction as the entity insert.
+model UsageCounter {
+  tenantId  String   @db.Uuid
+  metric    String // branches|staff|customers|orders_month|storage_mb
+  period    String   @default("all") // "all" or "2026-06" for monthly metrics
+  value     Int      @default(0)
+  updatedAt DateTime @default(now()) @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, metric, period])
+  @@map("usage_counters")
+}
+
+// Per-tenant branding for white-label (Enterprise). Falls back to ChayaOne defaults.
+model TenantBranding {
+  tenantId     String  @id @db.Uuid
+  customDomain String? @unique // brewlab.com → CNAME to platform
+  logoUrl      String?
+  faviconUrl   String?
+  colors       Json    @default("{}") // { "primary": "#…", "accent": "#…" }
+  appName      String? // overrides "ChayaOne" in the PWA chrome
+  poweredBy    Boolean @default(true) // false = fully white-labelled
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_branding")
+}
+
+model SupportTicket {
+  id         String       @id @default(uuid()) @db.Uuid
+  tenantId   String?      @db.Uuid // null = platform-level
+  subject    String
+  body       String
+  priority   String       @default("normal") // low|normal|high|urgent
+  status     TicketStatus @default(open)
+  assignedTo String?      @db.Uuid
+  createdBy  String?      @db.Uuid // StaffUser id (soft ref)
+  createdAt  DateTime     @default(now()) @db.Timestamptz(6)
+
+  tenant   Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  admin    PlatformAdmin?  @relation("AssignedAdmin", fields: [assignedTo], references: [id])
+  messages TicketMessage[]
+
+  @@index([status, priority])
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id         String   @id @default(uuid()) @db.Uuid
+  ticketId   String   @db.Uuid
+  authorKind String // platform|tenant
+  authorId   String?  @db.Uuid
+  body       String
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("ticket_messages")
+}
+
+model Announcement {
+  id          String    @id @default(uuid()) @db.Uuid
+  title       String
+  body        String
+  audience    String    @default("all") // all|plan:pro|tenant:<id>
+  publishedAt DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@map("announcements")
+}
+
+// Platform-level audit (distinct from the per-outlet AuditLog already in schema).
+model PlatformAudit {
+  id             String   @id @default(uuid()) @db.Uuid
+  adminId        String?  @db.Uuid
+  action         String // tenant.suspend, plan.change, slot.grant…
+  targetTenantId String?  @db.Uuid // soft ref (no relation; may be platform-level)
+  meta           Json?
+  ip             String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  admin PlatformAdmin? @relation(fields: [adminId], references: [id])
+
+  @@index([targetTenantId, createdAt])
+  @@map("platform_audit")
 }
