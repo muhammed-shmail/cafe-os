@@ -45,6 +45,7 @@ const rupee = (paise: number) => `₹${(paise / 100).toLocaleString('en-IN')}`;
 
 export default function PwaClient({ qrToken }: { qrToken: string | null }) {
   const [ctx, setCtx] = useState<Ctx | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<'home' | 'order' | 'play' | 'rewards'>('home');
   const [now, setNow] = useState(() => Date.now());
   const [toast, setToast] = useState<{ msg: string; emoji?: string } | null>(null);
@@ -54,9 +55,28 @@ export default function PwaClient({ qrToken }: { qrToken: string | null }) {
 
   const qs = qrToken ? `?t=${encodeURIComponent(qrToken)}` : '';
 
+  // Resilient load: retry transient failures a few times, then surface a clear,
+  // retryable error instead of hanging forever on the loading screen.
   const load = useCallback(async () => {
-    const r = await fetch(`/api/customer/context${qs}`);
-    if (r.ok) setCtx(await r.json());
+    setErr(null);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const r = await fetch(`/api/customer/context${qs}`);
+        if (!r.ok) throw new Error(r.status === 404 ? 'not_setup' : `http_${r.status}`);
+        setCtx(await r.json());
+        return;
+      } catch (e: unknown) {
+        if (attempt >= 2) {
+          setErr(
+            (e instanceof Error && e.message === 'not_setup')
+              ? 'This table link isn’t set up yet. Please ask our staff for help.'
+              : 'Couldn’t connect. Check your connection and try again.',
+          );
+          return;
+        }
+        await new Promise((res) => setTimeout(res, 1500)); // brief backoff before retry
+      }
+    }
   }, [qs]);
 
   useEffect(() => { load(); }, [load]);
@@ -95,13 +115,26 @@ export default function PwaClient({ qrToken }: { qrToken: string | null }) {
 
   if (!ctx) return (
     <Shell>
-      <div className="pwa-load">
-        <BrandMark size={184} />
-        <AlphaTag />
-        <p className="pwa-load-cap">Brewing your table…</p>
-        <span className="pwa-load-steam" aria-hidden="true"><i /><i /><i /></span>
-      </div>
+      {err ? (
+        <div className="reg">
+          <BrandMark size={120} />
+          <AlphaTag />
+          <h2 className="reg-h">Hmm, that didn’t load</h2>
+          <p className="reg-sub">{err}</p>
+          <div className="reg-form">
+            <button className="reg-btn" onClick={() => load()}>Try again</button>
+          </div>
+        </div>
+      ) : (
+        <div className="pwa-load">
+          <BrandMark size={184} />
+          <AlphaTag />
+          <p className="pwa-load-cap">Brewing your table…</p>
+          <span className="pwa-load-steam" aria-hidden="true"><i /><i /><i /></span>
+        </div>
+      )}
       <style>{loadCss}</style>
+      <style>{css}</style>
     </Shell>
   );
 

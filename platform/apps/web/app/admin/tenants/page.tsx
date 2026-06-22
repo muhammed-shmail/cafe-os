@@ -39,7 +39,7 @@ export default async function TenantsPage() {
       </header>
 
       <section className="p-6">
-        <div className="lux-card overflow-hidden">
+        <div className="lux-card card-glow overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr style={{ background: 'var(--paper-2)', color: 'var(--ink-3)' }} className="text-left text-xs uppercase tracking-wide">
@@ -55,7 +55,7 @@ export default async function TenantsPage() {
               {tenants.map((t) => {
                 const st = t.subscription?.status ?? '—';
                 return (
-                  <tr key={t.id} className="border-t" style={{ borderColor: 'var(--line)' }}>
+                  <tr key={t.id} className="border-t transition-colors hover:bg-[var(--paper-3)]" style={{ borderColor: 'var(--line)' }}>
                     <td className="px-4 py-3">
                       <div className="font-bold">{t.name}</div>
                       <div className="text-xs" style={{ color: 'var(--ink-3)' }}>{t.subdomain ?? '—'}.chayaone.com</div>

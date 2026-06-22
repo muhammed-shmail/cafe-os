@@ -10,6 +10,7 @@
     "push": "dotenv -e ../../.env -- prisma db push",
     "migrate": "dotenv -e ../../.env -- prisma migrate dev",
     "deploy": "dotenv -e ../../.env -- prisma migrate deploy",
+    "deploy:prod": "prisma migrate deploy",
     "seed": "dotenv -e ../../.env -- tsx prisma/seed.ts",
     "activate:inventory": "dotenv -e ../../.env -- tsx prisma/activate-inventory.ts",
     "studio": "dotenv -e ../../.env -- prisma studio"

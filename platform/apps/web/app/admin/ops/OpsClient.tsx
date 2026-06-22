@@ -42,7 +42,7 @@ export function OpsClient({ announcements, tickets }: { announcements: Announcem
 
   return (
     <div className="space-y-6">
-      <div className="lux-card p-5">
+      <div className="lux-card card-glow p-5">
         <h2 className="font-display text-xl mb-3">Announcements</h2>
         <form onSubmit={publish} className="space-y-2 mb-4">
           <input required placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full rounded-xl px-3 py-2 text-sm outline-none" style={input} />
@@ -63,7 +63,7 @@ export function OpsClient({ announcements, tickets }: { announcements: Announcem
         </div>
       </div>
 
-      <div className="lux-card p-5">
+      <div className="lux-card card-glow p-5">
         <h2 className="font-display text-xl mb-3">Support tickets</h2>
         <div className="space-y-2 max-h-[320px] overflow-auto">
           {tickets.map((t) => (

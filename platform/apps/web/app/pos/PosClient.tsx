@@ -1,15 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { computeBill, formatINR, type BillLine } from '@cafeos/core';
 import { STAGES, posStageOf } from '@/lib/orderStatus';
 import type { Floor } from '@/lib/floors';
 import {
-  ThemeToggle, Lock, Table2, ClipboardList, LayoutDashboard, RefreshCw, Coffee,
+  ThemeToggle, Table2, ClipboardList, LayoutDashboard, RefreshCw, Coffee,
   Plus, Minus, X, Check, Printer, Receipt, Smartphone, Banknote, CreditCard,
   CupSoda, UtensilsCrossed, Croissant, Cake, Soup, User, QrCode, type LucideIcon,
 } from '@/components/ui';
+import { ShiftStatus } from '@/components/ShiftStatus';
 
 /** Category → SVG icon (replaces structural emoji; food glyph stays decorative). */
 const CAT_ICON: Record<string, LucideIcon> = {
@@ -67,7 +67,6 @@ function tableStage(status?: string): TableStage {
 }
 
 export default function PosClient({ outlet, staff, menu, tables, floors }: { outlet: Outlet; staff: Staff; menu: MenuCategory[]; tables: TableDto[]; floors: Floor[] }) {
-  const router = useRouter();
   const [activeCat, setActiveCat] = useState(menu[0]?.id ?? '');
   const [cart, setCart] = useState<Line[]>([]);
   const [orderType, setOrderType] = useState<'dine_in' | 'takeaway'>('dine_in');
@@ -332,12 +331,6 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
     setCart([]); setDiscountPct(0); setScPct(0);
   }
 
-  async function lockTill() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.replace('/login');
-    router.refresh();
-  }
-
   async function submit(
     withPayment: null | { method: 'cash' | 'upi' | 'card'; tipPaise: number },
     opts?: { customer?: { name: string; phone: string } | null; print?: boolean },
@@ -402,9 +395,7 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
           </div>
           <div className="flex items-center gap-1.5">
             <ThemeToggle />
-            <button onClick={lockTill} title="Lock till" aria-label="Lock till" className="btn btn-icon btn-sm btn-ghost">
-              <Lock size={17} aria-hidden />
-            </button>
+            <ShiftStatus />
           </div>
         </div>
         <div className="flex items-center gap-2 px-1 -mt-1">

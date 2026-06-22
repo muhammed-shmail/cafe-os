@@ -1349,11 +1349,10 @@ function Loading() {
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {Array.from({ length: 4 }).map((_, i) => (
         <div key={i} className="card p-4" style={{ height: 96 }}>
-          <div className="h-3 w-16 rounded mb-3" style={{ background: 'var(--paper-3)', animation: 'shimmer 1.4s infinite' }} />
-          <div className="h-7 w-24 rounded" style={{ background: 'var(--paper-3)', animation: 'shimmer 1.4s infinite' }} />
+          <span className="skeleton block h-3 w-16 rounded mb-3" />
+          <span className="skeleton block h-7 w-24 rounded" />
         </div>
       ))}
-      <style>{`@keyframes shimmer{0%,100%{opacity:.5}50%{opacity:1}}`}</style>
     </div>
   );
 }

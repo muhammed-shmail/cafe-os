@@ -71,6 +71,9 @@
   }
   .card-hover { transition: box-shadow .2s ease, transform .2s ease; }
   .card-hover:hover { box-shadow: var(--sh-2); transform: translateY(-2px); }
+  /* Premium hover: soft gold ring + lift (pairs with Framer's transform). */
+  .card-glow { transition: box-shadow .25s ease, border-color .25s ease; }
+  .card-glow:hover { box-shadow: var(--sh-2), 0 0 0 3px color-mix(in srgb, var(--gold) 16%, transparent); border-color: var(--gold-hair, rgba(176,135,40,.42)); }
 
   /* ---- Inputs -------------------------------------------------------- */
   .inp {

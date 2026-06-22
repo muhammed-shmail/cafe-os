@@ -3,11 +3,9 @@ import { redirect } from 'next/navigation';
 import { prisma } from '@cafeos/db';
 import { getPlatformSession } from '@/lib/platform-session';
 import { AdminBar } from './AdminBar';
+import { AdminKpis, type AdminKpi } from './AdminKpis';
 
 export const dynamic = 'force-dynamic';
-
-const rupees = (paise: number) =>
-  '₹' + Math.round(paise / 100).toLocaleString('en-IN');
 
 export default async function AdminHome() {
   const s = await getPlatformSession();
@@ -36,14 +34,14 @@ export default async function AdminHome() {
     mrrPaise += Number(pp.monthly ?? 0);
   }
 
-  const kpis = [
-    { label: 'Cafes', value: tenantCount.toLocaleString('en-IN'), hint: 'total tenants' },
-    { label: 'Active', value: (byStatus.active ?? 0).toLocaleString('en-IN'), hint: 'paying' },
-    { label: 'Trialing', value: (byStatus.trialing ?? 0).toLocaleString('en-IN'), hint: 'in trial' },
-    { label: 'Suspended', value: ((byStatus.suspended ?? 0) + (byStatus.expired ?? 0)).toLocaleString('en-IN'), hint: 'suspended / expired' },
-    { label: 'MRR', value: rupees(mrrPaise), hint: 'monthly recurring' },
-    { label: 'ARR', value: rupees(mrrPaise * 12), hint: 'annual run-rate' },
-    { label: 'Orders today', value: ordersToday.toLocaleString('en-IN'), hint: 'across all cafes' },
+  const kpis: AdminKpi[] = [
+    { label: 'Cafes', n: tenantCount, hint: 'total tenants', kind: 'num' },
+    { label: 'Active', n: byStatus.active ?? 0, hint: 'paying', kind: 'num' },
+    { label: 'Trialing', n: byStatus.trialing ?? 0, hint: 'in trial', kind: 'num' },
+    { label: 'Suspended', n: (byStatus.suspended ?? 0) + (byStatus.expired ?? 0), hint: 'suspended / expired', kind: 'num' },
+    { label: 'MRR', n: mrrPaise, hint: 'monthly recurring', kind: 'money' },
+    { label: 'ARR', n: mrrPaise * 12, hint: 'annual run-rate', kind: 'money' },
+    { label: 'Orders today', n: ordersToday, hint: 'across all cafes', kind: 'num' },
   ];
 
   return (
@@ -57,17 +55,9 @@ export default async function AdminHome() {
       </header>
 
       <section className="p-6">
-        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
-          {kpis.map((k) => (
-            <div key={k.label} className="lux-card p-5">
-              <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--ink-3)' }}>{k.label}</p>
-              <p className="font-display text-[34px] leading-tight mt-1">{k.value}</p>
-              <p className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>{k.hint}</p>
-            </div>
-          ))}
-        </div>
+        <AdminKpis kpis={kpis} />
 
-        <Link href="/admin/tenants" className="lux-card p-6 mt-6 flex items-center justify-between" style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Link href="/admin/tenants" className="lux-card card-glow p-6 mt-6 flex items-center justify-between" style={{ textDecoration: 'none', color: 'inherit' }}>
           <div>
             <h2 className="font-display text-xl">Tenants →</h2>
             <p className="text-sm mt-1" style={{ color: 'var(--ink-2)' }}>
@@ -77,7 +67,7 @@ export default async function AdminHome() {
           <span className="font-display text-3xl" style={{ color: 'var(--gold-d)' }}>{tenantCount}</span>
         </Link>
 
-        <Link href="/admin/ops" className="lux-card p-6 mt-4 flex items-center justify-between" style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Link href="/admin/ops" className="lux-card card-glow p-6 mt-4 flex items-center justify-between" style={{ textDecoration: 'none', color: 'inherit' }}>
           <div>
             <h2 className="font-display text-xl">Operations →</h2>
             <p className="text-sm mt-1" style={{ color: 'var(--ink-2)' }}>

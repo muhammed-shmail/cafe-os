@@ -1,10 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState, useTransition } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { formatINR } from '@cafeos/core';
 import { BrandMark } from '@/components/BrandMark';
+import { CountUp } from '@/components/ui/motion';
+import { TeaLoader } from '@/components/ui/TeaLoader';
+import { RevenuePanel } from '@/components/dashboard/RevenuePanel';
 import type { DashboardData } from '@/lib/analytics';
 import { SECTION_KEY, SectionView } from './Sections';
 import CustomerManagement from './CustomerManagement';
@@ -14,9 +18,10 @@ import { tableOrderUrl, tableQrImageUrl } from '@/lib/qr';
 import { FEATURED_LABELS, DEFAULT_GAME_KEYS, type PwaConfig } from '@/lib/pwa';
 import { prettyAction } from '@/lib/audit-labels';
 import {
-  ThemeToggle, Bell, Table2, LogOut, LayoutDashboard, Wifi, ChefHat,
+  ThemeToggle, Bell, Table2, LogOut, LayoutDashboard, Wifi, ChefHat, Menu,
   ClipboardList, UtensilsCrossed, Package, Truck, Users, Settings, type LucideIcon,
 } from '@/components/ui';
+import { ShiftStatus } from '@/components/ShiftStatus';
 
 type FloorTable = { id: string; label: string; seats: number; state: string; qrToken: string; floorId: string | null; activeOrders: number };
 type Floor = { id: string; name: string; sort: number };
@@ -72,6 +77,20 @@ export default function DashboardClient({
     setIsAdvanced(val);
     localStorage.setItem('cafeos_advanced', String(val));
     flashMessage(val ? 'Advanced Mode unlocked!' : 'Beginner Mode active (simple layout).');
+  };
+
+  // Sidebar (menu) visibility — visible by default, choice persisted per device.
+  const reduceMotion = useReducedMotion();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  useEffect(() => {
+    if (localStorage.getItem('cafeos_sidebar') === '0') setSidebarOpen(false);
+  }, []);
+  const toggleSidebar = () => {
+    setSidebarOpen((v) => {
+      const next = !v;
+      localStorage.setItem('cafeos_sidebar', next ? '1' : '0');
+      return next;
+    });
   };
 
   // 2. Navigation State
@@ -1052,7 +1071,7 @@ export default function DashboardClient({
                 <button onClick={() => setQrTable(t)} className="btn py-1 px-2.5 text-xs" style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>QR</button>
                 <button onClick={() => copyTableLink(t)} className="btn py-1 px-2.5 text-xs" style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>Copy link</button>
                 <button onClick={() => startEditTable(t)} className="btn py-1 px-2.5 text-xs" style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>Edit</button>
-                <button onClick={() => handleDeleteTable(t)} disabled={occupied} title={occupied ? 'Free the table before deleting' : 'Delete table'} className="btn py-1 px-2.5 text-xs disabled:opacity-40" style={{ background: 'var(--paper-2)', border: '1px solid var(--chilli, #c0392b)', color: 'var(--chilli, #c0392b)' }}>Delete</button>
+                <button onClick={() => handleDeleteTable(t)} disabled={occupied} title={occupied ? 'Free the table before deleting' : 'Delete table'} className="btn py-1 px-2.5 text-xs disabled:opacity-40" style={{ background: 'var(--paper-2)', border: '1px solid var(--clay)', color: 'var(--clay)' }}>Delete</button>
               </div>
             </>
           )}
@@ -1205,6 +1224,9 @@ export default function DashboardClient({
   }, [activeMenu, activeSubTab, salesGst]);
 
   async function logout() {
+    // clock out (no-op if no open punch) before ending the session, so attendance
+    // never has a dangling punch — same behaviour as the ShiftStatus "Out" button
+    await fetch('/api/attendance', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'out' }) }).catch(() => {});
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     router.replace('/login');
     router.refresh();
@@ -1215,9 +1237,16 @@ export default function DashboardClient({
   const estimatedProfit = Math.round(totalSales * 0.70);
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-[248px_1fr]" style={{ background: 'var(--paper)' }}>
-      {/* sidebar rail */}
-      <aside className="hidden lg:flex flex-col gap-1 p-4 border-r" style={{ borderColor: 'var(--line)', background: 'var(--paper-2)' }}>
+    <div className="flex min-h-screen" style={{ background: 'var(--paper)' }}>
+      {/* sidebar rail — collapsible (hidden on mobile; nav uses the header dropdown there) */}
+      <motion.aside
+        className="hidden lg:flex shrink-0 overflow-hidden lg:sticky lg:top-0 lg:h-screen lg:self-start"
+        initial={false}
+        animate={{ width: sidebarOpen ? 248 : 0 }}
+        transition={{ duration: reduceMotion ? 0 : 0.3, ease: [0.25, 0.8, 0.25, 1] }}
+        style={{ borderRight: sidebarOpen ? '1px solid var(--line)' : 'none', background: 'var(--paper-2)' }}
+      >
+      <div className="flex flex-col gap-1 p-4 w-full h-full min-h-0" style={{ width: 248 }}>
         <div className="flex items-center gap-2.5 px-2 py-3 mb-2">
           <img src="/logo chaya one.png" alt="ChayaOne" style={{ width: 104, height: 'auto', margin: 0, maxWidth: '100%' }} className="shrink-0 object-contain" />
           <div className="leading-tight min-w-0">
@@ -1226,22 +1255,26 @@ export default function DashboardClient({
           </div>
         </div>
 
-        <nav className="flex flex-col gap-0.5 flex-1">
-          {MENUS.map((m) => {
+        <nav className="flex flex-col gap-0.5 flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar">
+          {MENUS.map((m, i) => {
             // Reports now lives under Settings — keep Settings lit while viewing it
             const on = activeMenu === m.key || (m.key === 'settings' && activeMenu === 'reports');
             const Ic = m.icon;
             return (
-              <button
+              <motion.button
                 key={m.key}
                 onClick={() => {
                   setActiveMenu(m.key);
                   setLiveOrders(0);
                 }}
                 aria-current={on ? 'page' : undefined}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-left transition"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.4, ease: [0.25, 0.8, 0.25, 1], delay: i * 0.04 }}
+                whileHover={{ x: on ? 0 : 2 }}
+                className={`relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-left transition ${on ? '' : 'hover:bg-[var(--paper-3)]'}`}
                 style={on
-                  ? { background: 'var(--turmeric)', color: '#2A1607', fontWeight: 700 }
+                  ? { background: 'var(--turmeric)', color: '#2A1607', fontWeight: 700, boxShadow: '0 6px 16px -6px color-mix(in srgb, var(--turmeric) 75%, transparent)' }
                   : { color: 'var(--ink-2)' }}
               >
                 <Ic size={18} aria-hidden className="shrink-0" />
@@ -1251,7 +1284,7 @@ export default function DashboardClient({
                     {liveOrders}
                   </span>
                 )}
-              </button>
+              </motion.button>
             );
           })}
         </nav>
@@ -1269,18 +1302,31 @@ export default function DashboardClient({
         <button onClick={logout} className="flex items-center gap-2 px-3 py-2 mt-1 text-sm text-left rounded-xl transition" style={{ color: 'var(--ink-3)' }}>
           <LogOut size={16} aria-hidden /> Log out
         </button>
-      </aside>
+      </div>
+      </motion.aside>
 
-      <main className="min-w-0 p-5 md:p-7 flex flex-col gap-4">
+      <main className="min-w-0 flex-1 p-5 md:p-7 flex flex-col gap-4">
         {/* Header */}
         <header className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="font-display text-3xl md:text-4xl leading-tight">
-              {activeMenu === 'menu' ? 'Menu Items' : activeMenu.charAt(0).toUpperCase() + activeMenu.slice(1)}
-            </h1>
-            <p className="text-xs" style={{ color: 'var(--ink-3)' }}>
-              {outlet.name} · {isAdvanced ? 'Advanced Mode' : 'Beginner Mode'}
-            </p>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              aria-label={sidebarOpen ? 'Hide menu' : 'Show menu'}
+              aria-expanded={sidebarOpen}
+              title={sidebarOpen ? 'Hide menu' : 'Show menu'}
+              className="btn btn-icon btn-sm hidden lg:inline-flex shrink-0"
+            >
+              <Menu size={18} aria-hidden />
+            </button>
+            <div>
+              <h1 className="font-display text-3xl md:text-4xl leading-tight">
+                {activeMenu === 'menu' ? 'Menu Items' : activeMenu.charAt(0).toUpperCase() + activeMenu.slice(1)}
+              </h1>
+              <p className="text-xs" style={{ color: 'var(--ink-3)' }}>
+                {outlet.name} · {isAdvanced ? 'Advanced Mode' : 'Beginner Mode'}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {/* Mobile Nav Switcher */}
@@ -1343,6 +1389,8 @@ export default function DashboardClient({
                 </>
               )}
             </div>
+
+            <ShiftStatus />
           </div>
         </header>
 
@@ -1350,7 +1398,7 @@ export default function DashboardClient({
         {activeMenu === 'monitor' && (
           <div className="flex flex-col gap-4">
             {monitorLoading && !monitor ? (
-              <p className="text-sm">Loading live metrics…</p>
+              <TeaLoader label="Loading live metrics…" size={44} />
             ) : (
               <>
                 {/* live metric tiles */}
@@ -1440,7 +1488,7 @@ export default function DashboardClient({
         {activeMenu === 'dashboard' && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {/* AI Briefing */}
-            <section className="card col-span-2 p-5 flex flex-col justify-between">
+            <motion.section className="card col-span-2 p-5 flex flex-col justify-between" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, ease: [0.25, 0.8, 0.25, 1], delay: 0.05 }}>
               <div>
                 <span className="font-bold text-xs" style={{ color: 'var(--berry)' }}>✦ AI Morning Briefing</span>
                 <div className="grid gap-2.5 mt-3">
@@ -1456,16 +1504,21 @@ export default function DashboardClient({
                   )}
                 </div>
               </div>
-            </section>
+            </motion.section>
 
             {/* Constraints display: Sales, Orders, Profit, Low Stock, Top Sellers */}
-            <KpiCard label="Today's Sales" value={formatINR(totalSales)} />
-            <KpiCard label="Orders" value={String(kpi.todayOrders)} />
-            <KpiCard label="Profit (est. 70%)" value={formatINR(estimatedProfit)} tone="cardamom" />
-            <KpiCard label="Low Stock Items" value={String(lowStock.length)} tone={lowStock.length > 0 ? 'gold' : undefined} />
+            <KpiCard label="Today's Sales" n={totalSales} format={formatINR} index={0} />
+            <KpiCard label="Orders" n={kpi.todayOrders} index={1} />
+            <KpiCard label="Profit (est. 70%)" n={estimatedProfit} format={formatINR} tone="cardamom" index={2} />
+            <KpiCard label="Low Stock Items" n={lowStock.length} tone={lowStock.length > 0 ? 'gold' : undefined} index={3} />
+
+            {/* Revenue overview — total revenue + date-wise sales chart/report */}
+            <div className="col-span-2 lg:col-span-4">
+              <RevenuePanel initialTrend={trend} />
+            </div>
 
             {/* Low Stock Alerts list */}
-            <section className="card col-span-2 p-5">
+            <motion.section className="card col-span-2 p-5" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, ease: [0.25, 0.8, 0.25, 1], delay: 0.1 }}>
               <h4 className="text-base font-bold mb-3">⚠ Low Stock Alerts</h4>
               {lowStock.length === 0 ? (
                 <p className="text-sm text-ink-3">All ingredients look healthy!</p>
@@ -1479,10 +1532,10 @@ export default function DashboardClient({
                   ))}
                 </div>
               )}
-            </section>
+            </motion.section>
 
             {/* Top Selling Items */}
-            <section className="card col-span-2 p-5">
+            <motion.section className="card col-span-2 p-5" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, ease: [0.25, 0.8, 0.25, 1], delay: 0.15 }}>
               <h4 className="text-base font-bold mb-3">⭐ Top Selling Items</h4>
               {topItems.length === 0 ? (
                 <p className="text-sm text-ink-3">Not enough orders to rank bestsellers.</p>
@@ -1496,7 +1549,7 @@ export default function DashboardClient({
                   ))}
                 </div>
               )}
-            </section>
+            </motion.section>
 
             {/* AI Assistant grounded box */}
             <Assistant />
@@ -1662,7 +1715,7 @@ export default function DashboardClient({
                 )}
                 <h4 className="font-bold mb-3">Current Stock Levels</h4>
                 {inventoryLoading ? (
-                  <p className="text-sm">Loading stock list...</p>
+                  <TeaLoader label="Loading stock…" size={44} />
                 ) : stockItems.length === 0 ? (
                   <p className="text-sm text-ink-3">No stock items tracked yet.</p>
                 ) : (
@@ -1689,7 +1742,7 @@ export default function DashboardClient({
                 <h4 className="font-bold mb-1">Stock Consumption History</h4>
                 <p className="text-xs text-ink-3 mb-3">Raw materials auto-deducted from recipes as menu items are sold.</p>
                 {inventoryLoading ? (
-                  <p className="text-sm">Loading…</p>
+                  <TeaLoader label="Loading…" size={44} />
                 ) : consumption.length === 0 ? (
                   <p className="text-sm text-ink-3">No consumption yet. Link recipes in the Recipes Wizard, then sell items on the POS — deductions appear here.</p>
                 ) : (
@@ -1713,7 +1766,7 @@ export default function DashboardClient({
                 <h4 className="font-bold mb-3">Record Purchase</h4>
                 <form onSubmit={handleAddPurchase} className="grid gap-3">
                   <div>
-                    <label className="block text-xs font-bold mb-1">Select Ingredient</label>
+                    <label className="lbl">Select Ingredient</label>
                     <select
                       value={purchItemId}
                       onChange={(e) => setPurchItemId(e.target.value)}
@@ -1728,7 +1781,7 @@ export default function DashboardClient({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold mb-1">Purchase Quantity</label>
+                    <label className="lbl">Purchase Quantity</label>
                     <input
                       type="number"
                       step="0.01"
@@ -1741,7 +1794,7 @@ export default function DashboardClient({
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold mb-1">Unit Cost (₹)</label>
+                    <label className="lbl">Unit Cost (₹)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -1763,7 +1816,7 @@ export default function DashboardClient({
                 <h4 className="font-bold mb-3">Adjust Stock Count</h4>
                 <form onSubmit={handleAdjustStock} className="grid gap-3">
                   <div>
-                    <label className="block text-xs font-bold mb-1">Select Ingredient</label>
+                    <label className="lbl">Select Ingredient</label>
                     <select
                       value={adjustItemId}
                       onChange={(e) => setAdjustItemId(e.target.value)}
@@ -1778,7 +1831,7 @@ export default function DashboardClient({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold mb-1">Actual Qty On Hand</label>
+                    <label className="lbl">Actual Qty On Hand</label>
                     <input
                       type="number"
                       step="0.01"
@@ -1802,27 +1855,27 @@ export default function DashboardClient({
                   <p className="text-xs text-ink-3 mb-3">Link raw materials to a menu item. Each sale auto-deducts these quantities from stock.</p>
                   <form onSubmit={handleLinkRecipe} className="grid gap-3 max-w-md">
                     <div>
-                      <label className="block text-xs font-bold mb-1">Menu Item (POS)</label>
-                      <select value={recipeMenuItemId} onChange={(e) => setRecipeMenuItemId(e.target.value)} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} required>
+                      <label className="lbl">Menu Item (POS)</label>
+                      <select value={recipeMenuItemId} onChange={(e) => setRecipeMenuItemId(e.target.value)} className="inp" required>
                         <option value="">-- Choose Menu Item --</option>
                         {menuItems.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-bold mb-1">Raw Material</label>
-                      <select value={recipeStockItemId} onChange={(e) => setRecipeStockItemId(e.target.value)} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} required>
+                      <label className="lbl">Raw Material</label>
+                      <select value={recipeStockItemId} onChange={(e) => setRecipeStockItemId(e.target.value)} className="inp" required>
                         <option value="">-- Choose Material --</option>
                         {stockItems.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.unit})</option>)}
                       </select>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-bold mb-1">Quantity per item</label>
-                        <input type="number" step="0.001" placeholder="e.g. 100" value={recipeQty} onChange={(e) => setRecipeQty(e.target.value)} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} required />
+                        <label className="lbl">Quantity per item</label>
+                        <input type="number" step="0.001" placeholder="e.g. 100" value={recipeQty} onChange={(e) => setRecipeQty(e.target.value)} className="inp" required />
                       </div>
                       <div>
-                        <label className="block text-xs font-bold mb-1">Unit (optional)</label>
-                        <input value={recipeUnit} onChange={(e) => setRecipeUnit(e.target.value)} placeholder="defaults to stock unit" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                        <label className="lbl">Unit (optional)</label>
+                        <input value={recipeUnit} onChange={(e) => setRecipeUnit(e.target.value)} placeholder="defaults to stock unit" className="inp" />
                       </div>
                     </div>
                     <button type="submit" className="btn btn-primary mt-1">Link Ingredient</button>
@@ -1832,7 +1885,7 @@ export default function DashboardClient({
                 <section className="card p-5">
                   <h4 className="font-bold mb-3">Existing Recipes</h4>
                   {inventoryLoading && recipes.length === 0 ? (
-                    <p className="text-sm">Loading…</p>
+                    <TeaLoader label="Loading…" size={44} />
                   ) : recipes.length === 0 ? (
                     <p className="text-sm text-ink-3">No recipes yet. Link ingredients above — or run <span className="font-mono">activate:inventory</span> to seed them.</p>
                   ) : (
@@ -1913,7 +1966,7 @@ export default function DashboardClient({
                 <section className="card p-5">
                   <h4 className="font-bold mb-3">Supplier Balances</h4>
                   {suppliersLoading ? (
-                    <p className="text-sm">Loading…</p>
+                    <TeaLoader label="Loading…" size={44} />
                   ) : !suppliers?.vendors?.length ? (
                     <p className="text-sm text-ink-3">No suppliers yet. Add one under “Add Supplier”.</p>
                   ) : (
@@ -1989,40 +2042,40 @@ export default function DashboardClient({
                 <h4 className="font-bold mb-3">Record Purchase Invoice</h4>
                 <form onSubmit={handleAddInvoice} className="grid gap-3">
                   <div>
-                    <label className="block text-xs font-bold mb-1">Supplier</label>
-                    <select value={invVendorId} onChange={(e) => setInvVendorId(e.target.value)} required className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                    <label className="lbl">Supplier</label>
+                    <select value={invVendorId} onChange={(e) => setInvVendorId(e.target.value)} required className="inp">
                       <option value="">-- Choose Supplier --</option>
                       {(suppliers?.vendors ?? []).map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
                     </select>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold mb-1">Invoice No.</label>
-                      <input value={invNo} onChange={(e) => setInvNo(e.target.value)} placeholder="INV-001" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">Invoice No.</label>
+                      <input value={invNo} onChange={(e) => setInvNo(e.target.value)} placeholder="INV-001" className="inp" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold mb-1">Total (₹)</label>
-                      <input type="number" step="0.01" value={invTotal} onChange={(e) => setInvTotal(e.target.value)} placeholder="1000" required className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold mb-1">Invoice date</label>
-                      <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold mb-1">Due date</label>
-                      <input type="date" value={invDue} onChange={(e) => setInvDue(e.target.value)} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">Total (₹)</label>
+                      <input type="number" step="0.01" value={invTotal} onChange={(e) => setInvTotal(e.target.value)} placeholder="1000" required className="inp" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold mb-1">Paid now (₹)</label>
-                      <input type="number" step="0.01" value={invPaidNow} onChange={(e) => setInvPaidNow(e.target.value)} placeholder="0" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">Invoice date</label>
+                      <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="inp" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold mb-1">Pay method</label>
-                      <select value={invMethod} onChange={(e) => setInvMethod(e.target.value)} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                      <label className="lbl">Due date</label>
+                      <input type="date" value={invDue} onChange={(e) => setInvDue(e.target.value)} className="inp" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="lbl">Paid now (₹)</label>
+                      <input type="number" step="0.01" value={invPaidNow} onChange={(e) => setInvPaidNow(e.target.value)} placeholder="0" className="inp" />
+                    </div>
+                    <div>
+                      <label className="lbl">Pay method</label>
+                      <select value={invMethod} onChange={(e) => setInvMethod(e.target.value)} className="inp">
                         {['cash', 'upi', 'bank', 'card', 'cheque'].map((m) => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </div>
@@ -2038,27 +2091,27 @@ export default function DashboardClient({
                 <h4 className="font-bold mb-3">Record Payment to Supplier</h4>
                 <form onSubmit={handleAddPayment} className="grid gap-3">
                   <div>
-                    <label className="block text-xs font-bold mb-1">Supplier</label>
-                    <select value={payVendorId} onChange={(e) => setPayVendorId(e.target.value)} required className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                    <label className="lbl">Supplier</label>
+                    <select value={payVendorId} onChange={(e) => setPayVendorId(e.target.value)} required className="inp">
                       <option value="">-- Choose Supplier --</option>
                       {(suppliers?.vendors ?? []).map((v: any) => <option key={v.id} value={v.id}>{v.name} · {formatINR(v.balancePaise)} due</option>)}
                     </select>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold mb-1">Amount (₹)</label>
-                      <input type="number" step="0.01" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} placeholder="500" required className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">Amount (₹)</label>
+                      <input type="number" step="0.01" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} placeholder="500" required className="inp" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold mb-1">Method</label>
-                      <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                      <label className="lbl">Method</label>
+                      <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className="inp">
                         {['cash', 'upi', 'bank', 'card', 'cheque'].map((m) => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold mb-1">Reference (txn / cheque no.)</label>
-                    <input value={payRef} onChange={(e) => setPayRef(e.target.value)} placeholder="optional" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                    <label className="lbl">Reference (txn / cheque no.)</label>
+                    <input value={payRef} onChange={(e) => setPayRef(e.target.value)} placeholder="optional" className="inp" />
                   </div>
                   <button type="submit" className="btn btn-primary mt-1">Save Payment</button>
                 </form>
@@ -2070,22 +2123,22 @@ export default function DashboardClient({
                 <h4 className="font-bold mb-3">Add Supplier</h4>
                 <form onSubmit={handleAddVendor} className="grid gap-3">
                   <div>
-                    <label className="block text-xs font-bold mb-1">Supplier name</label>
-                    <input value={vName} onChange={(e) => setVName(e.target.value)} placeholder="e.g. Friends Vegetables" required className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                    <label className="lbl">Supplier name</label>
+                    <input value={vName} onChange={(e) => setVName(e.target.value)} placeholder="e.g. Friends Vegetables" required className="inp" />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold mb-1">Phone</label>
-                      <input value={vPhone} onChange={(e) => setVPhone(e.target.value)} placeholder="+91…" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">Phone</label>
+                      <input value={vPhone} onChange={(e) => setVPhone(e.target.value)} placeholder="+91…" className="inp" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold mb-1">GSTIN</label>
-                      <input value={vGstin} onChange={(e) => setVGstin(e.target.value)} placeholder="optional" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">GSTIN</label>
+                      <input value={vGstin} onChange={(e) => setVGstin(e.target.value)} placeholder="optional" className="inp" />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold mb-1">Opening balance owed (₹)</label>
-                    <input type="number" step="0.01" value={vOpening} onChange={(e) => setVOpening(e.target.value)} placeholder="0" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                    <label className="lbl">Opening balance owed (₹)</label>
+                    <input type="number" step="0.01" value={vOpening} onChange={(e) => setVOpening(e.target.value)} placeholder="0" className="inp" />
                     <p className="text-[11px] text-ink-3 mt-1">Existing dues carried over when onboarding this supplier.</p>
                   </div>
                   <button type="submit" className="btn btn-primary mt-1">Add Supplier</button>
@@ -2177,7 +2230,7 @@ export default function DashboardClient({
                     </div>
                   </div>
                   {tablesLoading && !tablesData ? (
-                    <p className="text-sm">Loading…</p>
+                    <TeaLoader label="Loading…" size={44} />
                   ) : roster.length === 0 ? (
                     <p className="text-sm text-ink-3">No tables configured yet.</p>
                   ) : (
@@ -2299,12 +2352,12 @@ export default function DashboardClient({
                 <form onSubmit={handleSaveTableConfig} className="grid gap-3">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold mb-1">Occupied over (minutes)</label>
-                      <input type="number" value={cfgMinutes} onChange={(e) => setCfgMinutes(e.target.value)} placeholder="90" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">Occupied over (minutes)</label>
+                      <input type="number" value={cfgMinutes} onChange={(e) => setCfgMinutes(e.target.value)} placeholder="90" className="inp" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold mb-1">Bill under (₹)</label>
-                      <input type="number" value={cfgMinBill} onChange={(e) => setCfgMinBill(e.target.value)} placeholder="500" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">Bill under (₹)</label>
+                      <input type="number" value={cfgMinBill} onChange={(e) => setCfgMinBill(e.target.value)} placeholder="500" className="inp" />
                     </div>
                   </div>
                   <button type="submit" className="btn btn-primary mt-1">Save thresholds</button>
@@ -2566,59 +2619,34 @@ export default function DashboardClient({
 
             {activeMenu === 'settings' && settingsPanel === 'general' && (
               <section className="card p-5 max-w-md flex flex-col gap-4">
-                {/* Advanced Mode toggle switch */}
-                <div className="flex justify-between items-center p-3 rounded-xl border" style={{ borderColor: 'var(--line)' }}>
-                  <div>
-                    <h4 className="font-bold text-sm">Advanced Mode</h4>
-                    <p className="text-xs text-ink-3">Enable recipes, vendors, forecasting, and deep stats.</p>
-                  </div>
-                  <button
-                    onClick={() => handleToggleAdvanced(!isAdvanced)}
-                    className="btn py-2 px-4"
-                    style={{ background: isAdvanced ? 'var(--turmeric)' : 'var(--paper-3)', color: isAdvanced ? '#2A1607' : 'var(--ink)' }}
-                  >
-                    {isAdvanced ? 'ON' : 'OFF'}
-                  </button>
-                </div>
+                <Toggle label="Advanced Mode" desc="Enable recipes, vendors, forecasting, and deep stats." on={isAdvanced} onChange={(v) => handleToggleAdvanced(v)} />
 
                 {/* Store Profile — editable */}
-                <form onSubmit={handleSaveProfile}>
-                  <h4 className="font-bold mb-3">Store Profile</h4>
-                  <div className="grid gap-3">
-                    <div>
-                      <label className="block text-xs font-bold mb-1">Outlet Name</label>
-                      <input value={profile.name} onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))} required className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-bold mb-1">GSTIN</label>
-                        <input value={profile.gstin} onChange={(e) => setProfile((p) => ({ ...p, gstin: e.target.value }))} placeholder="None" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold mb-1">State Code</label>
-                        <input value={profile.stateCode} onChange={(e) => setProfile((p) => ({ ...p, stateCode: e.target.value }))} placeholder="KA" maxLength={2} className="w-full p-2.5 rounded-xl border text-sm outline-none uppercase" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
-                      </div>
-                    </div>
-
-                    {/* GST now lives in its own Tax & GST panel */}
-                    <button type="button" onClick={() => setSettingsPanel('tax')} className="rounded-xl border p-3 text-left flex items-center justify-between gap-3 hover:brightness-105 transition" style={{ borderColor: 'var(--line)', background: 'var(--paper-3)' }}>
-                      <span>
-                        <span className="block text-sm font-bold">Tax &amp; GST</span>
-                        <span className="block text-xs" style={{ color: 'var(--ink-3)' }}>{profile.gstEnabled ? `GST on · ${profile.gstType === 'inclusive' ? 'inclusive' : 'exclusive'}${profile.gstRate ? ` · ${profile.gstRate}%` : ' · per-item'}` : 'GST off — bills are tax-free'}</span>
-                      </span>
-                      <span className="text-ink-3">Manage →</span>
-                    </button>
-
-                    <div>
-                      <label className="block text-xs font-bold mb-1">Address</label>
-                      <input value={profile.line1} onChange={(e) => setProfile((p) => ({ ...p, line1: e.target.value }))} placeholder="Street / area" className="w-full p-2.5 rounded-xl border text-sm outline-none mb-2" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
-                      <div className="grid grid-cols-2 gap-3">
-                        <input value={profile.city} onChange={(e) => setProfile((p) => ({ ...p, city: e.target.value }))} placeholder="City" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
-                        <input value={profile.pincode} onChange={(e) => setProfile((p) => ({ ...p, pincode: e.target.value }))} placeholder="Pincode" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
-                      </div>
-                    </div>
-                    <button type="submit" className="btn btn-primary mt-1 w-fit">Save profile</button>
+                <form onSubmit={handleSaveProfile} className="flex flex-col gap-3">
+                  <h4 className="font-bold">Store Profile</h4>
+                  <Field label="Outlet Name"><input value={profile.name} onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))} required className="inp" /></Field>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="GSTIN"><input value={profile.gstin} onChange={(e) => setProfile((p) => ({ ...p, gstin: e.target.value }))} placeholder="None" className="inp" /></Field>
+                    <Field label="State Code"><input value={profile.stateCode} onChange={(e) => setProfile((p) => ({ ...p, stateCode: e.target.value }))} placeholder="KA" maxLength={2} className="inp uppercase" /></Field>
                   </div>
+
+                  {/* GST now lives in its own Tax & GST panel */}
+                  <button type="button" onClick={() => setSettingsPanel('tax')} className="rounded-xl border p-3 text-left flex items-center justify-between gap-3 hover:brightness-105 transition" style={{ borderColor: 'var(--line)', background: 'var(--paper-3)' }}>
+                    <span>
+                      <span className="block text-sm font-bold">Tax &amp; GST</span>
+                      <span className="block text-xs" style={{ color: 'var(--ink-3)' }}>{profile.gstEnabled ? `GST on · ${profile.gstType === 'inclusive' ? 'inclusive' : 'exclusive'}${profile.gstRate ? ` · ${profile.gstRate}%` : ' · per-item'}` : 'GST off — bills are tax-free'}</span>
+                    </span>
+                    <span className="text-ink-3">Manage →</span>
+                  </button>
+
+                  <Field label="Address">
+                    <input value={profile.line1} onChange={(e) => setProfile((p) => ({ ...p, line1: e.target.value }))} placeholder="Street / area" className="inp mb-2" />
+                    <div className="grid grid-cols-2 gap-3">
+                      <input value={profile.city} onChange={(e) => setProfile((p) => ({ ...p, city: e.target.value }))} placeholder="City" className="inp" />
+                      <input value={profile.pincode} onChange={(e) => setProfile((p) => ({ ...p, pincode: e.target.value }))} placeholder="Pincode" className="inp" />
+                    </div>
+                  </Field>
+                  <button type="submit" className="btn btn-primary mt-1 w-fit">Save profile</button>
                 </form>
               </section>
             )}
@@ -2688,42 +2716,42 @@ export default function DashboardClient({
                   <form onSubmit={handleCreateProduct} className="grid gap-3 p-4 mb-4 rounded-xl" style={{ background: 'var(--paper-3)', border: '1px solid var(--line-2)' }}>
                     <div className="grid sm:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-bold mb-1">Product name</label>
+                        <label className="lbl">Product name</label>
                         <input value={newProduct.name} onChange={(e) => setNewProduct((p) => ({ ...p, name: e.target.value }))} required placeholder="e.g. Masala Chai" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} />
                       </div>
                       <div>
-                        <label className="block text-xs font-bold mb-1">Price (₹)</label>
+                        <label className="lbl">Price (₹)</label>
                         <input value={newProduct.price} onChange={(e) => setNewProduct((p) => ({ ...p, price: e.target.value }))} required type="number" step="0.01" min="0" placeholder="0.00" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} />
                       </div>
                     </div>
                     <div className="grid sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-xs font-bold mb-1">Category</label>
+                        <label className="lbl">Category</label>
                         <select value={newProduct.categoryId} onChange={(e) => setNewProduct((p) => ({ ...p, categoryId: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }}>
                           <option value="">— Uncategorised —</option>
                           {menuCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-bold mb-1">GST rate</label>
+                        <label className="lbl">GST rate</label>
                         <select value={newProduct.gstRate} onChange={(e) => setNewProduct((p) => ({ ...p, gstRate: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }}>
                           {GST_OPTIONS.map((g) => <option key={g} value={g}>{g}%</option>)}
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-bold mb-1">Station</label>
+                        <label className="lbl">Station</label>
                         <select value={newProduct.station} onChange={(e) => setNewProduct((p) => ({ ...p, station: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none capitalize" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }}>
                           {STATION_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
                       </div>
                     </div>
                     <div>
-                      <label className="block text-xs font-bold mb-1">Description (optional)</label>
+                      <label className="lbl">Description (optional)</label>
                       <input value={newProduct.description} onChange={(e) => setNewProduct((p) => ({ ...p, description: e.target.value }))} placeholder="Short description shown to customers" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} />
                     </div>
                     <div className="flex flex-wrap items-end gap-2">
                       <div className="flex-1 min-w-[180px]">
-                        <label className="block text-xs font-bold mb-1">New category (optional)</label>
+                        <label className="lbl">New category (optional)</label>
                         <div className="flex gap-2">
                           <input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="e.g. Beverages" className="flex-1 p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} />
                           <button type="button" onClick={handleCreateCategory} className="btn py-2 px-3 text-sm" style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>Add</button>
@@ -2792,41 +2820,41 @@ export default function DashboardClient({
                           <div className="grid gap-3 px-3 pb-3 pt-1 border-t" style={{ borderColor: 'var(--line-2)' }}>
                             <div className="grid sm:grid-cols-2 gap-3">
                               <div>
-                                <label className="block text-xs font-bold mb-1">Name</label>
+                                <label className="lbl">Name</label>
                                 <input value={editDraft.name} onChange={(e) => setEditDraft((p) => ({ ...p, name: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} />
                               </div>
                               <div>
-                                <label className="block text-xs font-bold mb-1">Price (₹)</label>
+                                <label className="lbl">Price (₹)</label>
                                 <input value={editDraft.price} onChange={(e) => setEditDraft((p) => ({ ...p, price: e.target.value }))} type="number" step="0.01" min="0" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} />
                               </div>
                             </div>
                             <div className="grid sm:grid-cols-3 gap-3">
                               <div>
-                                <label className="block text-xs font-bold mb-1">Category</label>
+                                <label className="lbl">Category</label>
                                 <select value={editDraft.categoryId} onChange={(e) => setEditDraft((p) => ({ ...p, categoryId: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }}>
                                   <option value="">— Uncategorised —</option>
                                   {menuCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
                               </div>
                               <div>
-                                <label className="block text-xs font-bold mb-1">GST rate</label>
+                                <label className="lbl">GST rate</label>
                                 <select value={editDraft.gstRate} onChange={(e) => setEditDraft((p) => ({ ...p, gstRate: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }}>
                                   {GST_OPTIONS.map((g) => <option key={g} value={g}>{g}%</option>)}
                                 </select>
                               </div>
                               <div>
-                                <label className="block text-xs font-bold mb-1">Station</label>
+                                <label className="lbl">Station</label>
                                 <select value={editDraft.station} onChange={(e) => setEditDraft((p) => ({ ...p, station: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none capitalize" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }}>
                                   {STATION_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                                 </select>
                               </div>
                             </div>
                             <div>
-                              <label className="block text-xs font-bold mb-1">Description</label>
+                              <label className="lbl">Description</label>
                               <input value={editDraft.description} onChange={(e) => setEditDraft((p) => ({ ...p, description: e.target.value }))} placeholder="Short description" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} />
                             </div>
                             <div className="flex flex-wrap justify-between gap-2">
-                              <button onClick={() => handleDeleteProduct(item.id, item.name)} className="btn py-2 px-3 text-sm" style={{ background: 'var(--paper-2)', border: '1px solid var(--chilli, #c0392b)', color: 'var(--chilli, #c0392b)' }}>Delete</button>
+                              <button onClick={() => handleDeleteProduct(item.id, item.name)} className="btn py-2 px-3 text-sm" style={{ background: 'var(--paper-2)', border: '1px solid var(--clay)', color: 'var(--clay)' }}>Delete</button>
                               <div className="flex gap-2">
                                 <button onClick={() => setEditProductId(null)} className="btn py-2 px-3 text-sm" style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>Cancel</button>
                                 <button onClick={() => handleUpdateProduct(item.id)} className="btn btn-primary py-2 px-4 text-sm">Save changes</button>
@@ -2856,28 +2884,13 @@ export default function DashboardClient({
                 </div>
 
                 {/* Enable GST */}
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={profile.gstEnabled}
-                  onClick={() => setProfile((p) => ({ ...p, gstEnabled: !p.gstEnabled }))}
-                  className="rounded-xl border p-3 w-full flex items-center justify-between gap-3"
-                  style={{ borderColor: 'var(--line)', background: 'var(--paper-3)' }}
-                >
-                  <span className="text-left">
-                    <span className="block text-sm font-bold">Enable GST</span>
-                    <span className="block text-xs" style={{ color: 'var(--ink-3)' }}>{profile.gstEnabled ? 'Tax is calculated on bills' : 'Off — bills are tax-free'}</span>
-                  </span>
-                  <span className="relative shrink-0 rounded-full transition-colors" style={{ width: 44, height: 26, background: profile.gstEnabled ? 'var(--cardamom)' : 'var(--line-2)' }}>
-                    <span className="absolute top-[3px] rounded-full bg-white transition-all" style={{ width: 20, height: 20, left: profile.gstEnabled ? 21 : 3, boxShadow: 'var(--sh-1)' }} />
-                  </span>
-                </button>
+                <Toggle label="Enable GST" desc={profile.gstEnabled ? 'Tax is calculated on bills' : 'Off — bills are tax-free'} on={profile.gstEnabled} onChange={(v) => setProfile((p) => ({ ...p, gstEnabled: v }))} />
 
                 {profile.gstEnabled && (
                   <>
                     {/* Tax type */}
                     <div>
-                      <label className="block text-xs font-bold mb-1.5">Tax type</label>
+                      <label className="lbl">Tax type</label>
                       <div className="grid grid-cols-2 gap-2">
                         {([
                           { key: 'exclusive', title: 'Exclusive', sub: 'GST added on top of price' },
@@ -2898,7 +2911,7 @@ export default function DashboardClient({
 
                     {/* GST percentage */}
                     <div>
-                      <label className="block text-xs font-bold mb-1.5">GST percentage</label>
+                      <label className="lbl">GST percentage</label>
                       <div className="flex flex-wrap gap-2 mb-2">
                         {['', '0', '5', '12', '18', '28'].map((r) => {
                           const on = profile.gstRate === r;
@@ -2916,8 +2929,7 @@ export default function DashboardClient({
                         onChange={(e) => setProfile((p) => ({ ...p, gstRate: e.target.value.replace(/[^0-9.]/g, '') }))}
                         inputMode="decimal"
                         placeholder="Custom rate %, or leave blank for per-item"
-                        className="w-full p-2.5 rounded-xl border text-sm outline-none"
-                        style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }}
+                        className="inp"
                       />
                       <span className="block text-[11px] mt-1" style={{ color: 'var(--ink-3)' }}>
                         <b>Per-item</b> keeps each menu item’s own GST rate (set 0% on an item to make it tax-free). A flat rate overrides every item.
@@ -2962,8 +2974,8 @@ export default function DashboardClient({
                   <p className="text-xs text-ink-3 mb-3">Group tables into areas like Ground Floor, Rooftop or AC Hall. Optional — tables without a floor show under “Unassigned”.</p>
                   <form onSubmit={handleAddFloor} className="flex flex-wrap items-end gap-2 mb-3">
                     <div className="flex-1 min-w-[160px]">
-                      <label className="block text-xs font-bold mb-1">New floor / area</label>
-                      <input value={newFloorName} onChange={(e) => setNewFloorName(e.target.value)} placeholder="e.g. Rooftop" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">New floor / area</label>
+                      <input value={newFloorName} onChange={(e) => setNewFloorName(e.target.value)} placeholder="e.g. Rooftop" className="inp" />
                     </div>
                     <button type="submit" disabled={floorBusy} className="btn btn-primary py-2.5 px-4 text-sm disabled:opacity-50">+ Add floor</button>
                   </form>
@@ -2984,7 +2996,7 @@ export default function DashboardClient({
                             <b>{f.name}</b>
                             <span className="text-[11px] text-ink-3">{n} table{n === 1 ? '' : 's'}</span>
                             <button onClick={() => { setEditFloorId(f.id); setEditFloorName(f.name); }} className="text-xs text-ink-3 hover:text-ink" title="Rename" aria-label={`Rename ${f.name}`}>✎</button>
-                            <button onClick={() => handleDeleteFloor(f)} className="text-xs" style={{ color: 'var(--chilli, #c0392b)' }} title="Delete" aria-label={`Delete ${f.name}`}>🗑</button>
+                            <button onClick={() => handleDeleteFloor(f)} className="text-xs" style={{ color: 'var(--clay)' }} title="Delete" aria-label={`Delete ${f.name}`}>🗑</button>
                           </span>
                         );
                       })}
@@ -2996,17 +3008,17 @@ export default function DashboardClient({
                 <section className="card p-5">
                   <form onSubmit={handleAddTable} className="flex flex-wrap items-end gap-3">
                     <div className="flex-1 min-w-[140px]">
-                      <label className="block text-xs font-bold mb-1">Table name</label>
-                      <input value={tableForm.label} onChange={(e) => setTableForm((p) => ({ ...p, label: e.target.value }))} placeholder="e.g. T7 or Patio 2" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">Table name</label>
+                      <input value={tableForm.label} onChange={(e) => setTableForm((p) => ({ ...p, label: e.target.value }))} placeholder="e.g. T7 or Patio 2" className="inp" />
                     </div>
                     <div className="w-24">
-                      <label className="block text-xs font-bold mb-1">Seats</label>
-                      <input type="number" min={1} max={50} value={tableForm.seats} onChange={(e) => setTableForm((p) => ({ ...p, seats: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                      <label className="lbl">Seats</label>
+                      <input type="number" min={1} max={50} value={tableForm.seats} onChange={(e) => setTableForm((p) => ({ ...p, seats: e.target.value }))} className="inp" />
                     </div>
                     {floors.length > 0 && (
                       <div className="w-36">
-                        <label className="block text-xs font-bold mb-1">Floor</label>
-                        <select value={tableForm.floorId} onChange={(e) => setTableForm((p) => ({ ...p, floorId: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                        <label className="lbl">Floor</label>
+                        <select value={tableForm.floorId} onChange={(e) => setTableForm((p) => ({ ...p, floorId: e.target.value }))} className="inp">
                           <option value="">Unassigned</option>
                           {floors.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
                         </select>
@@ -3019,21 +3031,21 @@ export default function DashboardClient({
                   {showBulk && (
                     <form onSubmit={handleBulkAdd} className="mt-4 pt-4 border-t flex flex-wrap items-end gap-3" style={{ borderColor: 'var(--line)' }}>
                       <div className="w-28">
-                        <label className="block text-xs font-bold mb-1">How many</label>
-                        <input type="number" min={1} max={50} value={bulkForm.count} onChange={(e) => setBulkForm((p) => ({ ...p, count: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                        <label className="lbl">How many</label>
+                        <input type="number" min={1} max={50} value={bulkForm.count} onChange={(e) => setBulkForm((p) => ({ ...p, count: e.target.value }))} className="inp" />
                       </div>
                       <div className="w-28">
-                        <label className="block text-xs font-bold mb-1">Name prefix</label>
-                        <input value={bulkForm.prefix} onChange={(e) => setBulkForm((p) => ({ ...p, prefix: e.target.value }))} placeholder="T" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                        <label className="lbl">Name prefix</label>
+                        <input value={bulkForm.prefix} onChange={(e) => setBulkForm((p) => ({ ...p, prefix: e.target.value }))} placeholder="T" className="inp" />
                       </div>
                       <div className="w-24">
-                        <label className="block text-xs font-bold mb-1">Seats</label>
-                        <input type="number" min={1} max={50} value={bulkForm.seats} onChange={(e) => setBulkForm((p) => ({ ...p, seats: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                        <label className="lbl">Seats</label>
+                        <input type="number" min={1} max={50} value={bulkForm.seats} onChange={(e) => setBulkForm((p) => ({ ...p, seats: e.target.value }))} className="inp" />
                       </div>
                       {floors.length > 0 && (
                         <div className="w-36">
-                          <label className="block text-xs font-bold mb-1">Floor</label>
-                          <select value={bulkForm.floorId} onChange={(e) => setBulkForm((p) => ({ ...p, floorId: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                          <label className="lbl">Floor</label>
+                          <select value={bulkForm.floorId} onChange={(e) => setBulkForm((p) => ({ ...p, floorId: e.target.value }))} className="inp">
                             <option value="">Unassigned</option>
                             {floors.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
                           </select>
@@ -3087,31 +3099,36 @@ export default function DashboardClient({
                   <p className="text-xs text-ink-3">Configure the customer scan-to-order app: home content, games, wallet and loyalty. Changes are live for new customer sessions; nothing here affects the POS or KDS.</p>
                 </section>
 
-                {/* sub-tabs */}
-                <div className="flex gap-1.5 overflow-x-auto pb-1">
-                  {([
-                    ['featured', 'Featured Dishes'], ['banners', 'Banners'], ['home', 'Home Layout'],
-                    ['gamification', 'Gamification'], ['points', 'Reward Points'], ['wallet', 'Wallet'],
-                    ['loyalty', 'Loyalty'], ['table', 'QR Table'], ['registration', 'Registration'], ['theme', 'Theme'],
-                  ] as [typeof pwaTab, string][]).map(([key, label]) => (
-                    <button key={key} onClick={() => setPwaTab(key)} className="px-3 py-2 rounded-xl text-sm font-semibold whitespace-nowrap border transition"
-                      style={pwaTab === key ? { background: 'var(--turmeric)', color: '#2A1607', borderColor: 'transparent' } : { background: 'var(--paper-2)', borderColor: 'var(--line)' }}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
+                <div className="grid gap-4 lg:grid-cols-[220px_1fr] items-start">
+                  {/* grouped sub-nav */}
+                  <nav className="flex flex-col gap-3 lg:sticky lg:top-4">
+                    {PWA_NAV.map((grp) => (
+                      <div key={grp.group}>
+                        <p className="text-[11px] font-bold uppercase tracking-wide mb-1.5 px-1" style={{ color: 'var(--ink-3)' }}>{grp.group}</p>
+                        <div className="flex flex-wrap lg:flex-col gap-1.5">
+                          {grp.items.map(([key, label]) => {
+                            const on = pwaTab === key;
+                            return (
+                              <button key={key} onClick={() => setPwaTab(key as typeof pwaTab)} className="px-3 py-2 rounded-xl text-sm font-semibold text-left border transition"
+                                style={on ? { background: 'var(--turmeric)', color: '#2A1607', borderColor: 'transparent' } : { background: 'var(--paper-2)', borderColor: 'var(--line)' }}>
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </nav>
 
-                {!pwaCfg ? (
-                  <section className="card p-5"><p className="text-sm text-ink-3">Loading…</p></section>
-                ) : (
+                  {/* content pane */}
+                  <div className="min-w-0 flex flex-col gap-4">
+                  {!pwaCfg ? (
+                    <section className="card p-5"><p className="text-sm text-ink-3">Loading…</p></section>
+                  ) : (
                   <>
                     {/* FEATURED DISHES */}
                     {pwaTab === 'featured' && (
-                      <section className="card p-5 flex flex-col gap-4">
-                        <div>
-                          <h4 className="font-bold">Featured Dishes</h4>
-                          <p className="text-xs text-ink-3">Pick dishes to spotlight on the app home with a label and priority.</p>
-                        </div>
+                      <SettingsSection title="Featured Dishes" desc="Pick dishes to spotlight on the app home with a label and priority.">
                         <PwaFeaturedForm items={pwaItems} busy={pwaBusy} uploadImage={uploadImage} onAdd={(dish) => pwaSave({ action: 'featured_save', dish }, 'Featured dish saved')} />
                         {pwaCfg.featured.length === 0 ? (
                           <p className="text-sm text-ink-3 p-4 rounded-xl text-center" style={{ background: 'var(--paper-3)' }}>No featured dishes yet.</p>
@@ -3127,22 +3144,18 @@ export default function DashboardClient({
                                     <b className="text-sm block truncate">{it?.name ?? 'Unknown item'}</b>
                                     <span className="text-xs text-ink-3">{FEATURED_LABELS.find((l) => l.value === f.label)?.label ?? 'No label'} · priority {f.priority}</span>
                                   </div>
-                                  <button onClick={() => pwaSave({ action: 'featured_delete', itemId: f.itemId }, 'Removed')} className="btn py-1 px-2.5 text-xs" style={{ background: 'var(--paper-2)', border: '1px solid var(--chilli, #c0392b)', color: 'var(--chilli, #c0392b)' }}>Remove</button>
+                                  <button onClick={() => pwaSave({ action: 'featured_delete', itemId: f.itemId }, 'Removed')} className="btn btn-danger btn-sm">Remove</button>
                                 </div>
                               );
                             })}
                           </div>
                         )}
-                      </section>
+                      </SettingsSection>
                     )}
 
                     {/* PROMOTIONAL BANNERS */}
                     {pwaTab === 'banners' && (
-                      <section className="card p-5 flex flex-col gap-4">
-                        <div>
-                          <h4 className="font-bold">Promotional Banners</h4>
-                          <p className="text-xs text-ink-3">Auto-sliding carousel on the app home. Upload a poster, set an optional schedule and order.</p>
-                        </div>
+                      <SettingsSection title="Promotional Banners" desc="Auto-sliding carousel on the app home. Upload a poster, set an optional schedule and order.">
                         <PwaBannerForm busy={pwaBusy} uploadImage={uploadImage} onAdd={(banner) => pwaSave({ action: 'banner_save', banner }, 'Banner saved')} />
                         {pwaCfg.banners.length === 0 ? (
                           <p className="text-sm text-ink-3 p-4 rounded-xl text-center" style={{ background: 'var(--paper-3)' }}>No banners yet.</p>
@@ -3155,18 +3168,18 @@ export default function DashboardClient({
                                   <b className="text-sm block truncate">{b.title || '(untitled)'}</b>
                                   <span className="text-xs text-ink-3">order {b.order}{b.startAt ? ` · from ${b.startAt}` : ''}{b.endAt ? ` · to ${b.endAt}` : ''}</span>
                                 </div>
-                                <button onClick={() => pwaSave({ action: 'banner_delete', id: b.id }, 'Removed')} className="btn py-1 px-2.5 text-xs" style={{ background: 'var(--paper-2)', border: '1px solid var(--chilli, #c0392b)', color: 'var(--chilli, #c0392b)' }}>Remove</button>
+                                <button onClick={() => pwaSave({ action: 'banner_delete', id: b.id }, 'Removed')} className="btn btn-danger btn-sm">Remove</button>
                               </div>
                             ))}
                           </div>
                         )}
-                      </section>
+                      </SettingsSection>
                     )}
 
                     {/* HOME LAYOUT */}
                     {pwaTab === 'home' && (
-                      <section className="card p-5 flex flex-col gap-3 max-w-md">
-                        <div><h4 className="font-bold">Home Layout</h4><p className="text-xs text-ink-3">Tap to toggle sections; click order sets the display order.</p></div>
+                      <SettingsSection title="Home Layout" desc="Tap to show/hide sections; click order sets the display order." className="max-w-md"
+                        footer={<SaveButton busy={pwaBusy} onClick={() => pwaSave({ action: 'home_save', sections: pwaCfg.home.sections }, 'Home layout saved')}>Save layout</SaveButton>}>
                         {(['banners', 'featured', 'track', 'loyalty'] as const).map((s) => {
                           const idx = pwaCfg.home.sections.indexOf(s);
                           const on = idx >= 0;
@@ -3179,123 +3192,122 @@ export default function DashboardClient({
                             </button>
                           );
                         })}
-                        <button onClick={() => pwaSave({ action: 'home_save', sections: pwaCfg.home.sections }, 'Home layout saved')} disabled={pwaBusy} className="btn btn-primary w-fit disabled:opacity-50">Save layout</button>
-                      </section>
+                      </SettingsSection>
                     )}
 
-                    {/* GAMIFICATION */}
+                    {/* GAMES */}
                     {pwaTab === 'gamification' && (
-                      <section className="card p-5 flex flex-col gap-4">
-                        <div><h4 className="font-bold">Gamification</h4><p className="text-xs text-ink-3">Enable games, gate them by order value, cap plays and set availability hours (IST).</p></div>
-                        <Toggle label="Games enabled" on={pwaCfg.gamification.enabledGlobal} onChange={(v) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, enabledGlobal: v } }))} />
-                        <div className="grid grid-cols-2 gap-3 max-w-md">
-                          <Field label="Max games / day (0 = unlimited)"><input type="number" min={0} value={pwaCfg.gamification.maxGamesPerDay} onChange={(e) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, maxGamesPerDay: Number(e.target.value) || 0 } }))} className={PWA_INPUT} /></Field>
-                          <Field label="Spin points multiplier"><input type="number" min={0} step={0.1} value={pwaCfg.gamification.spin.pointsMultiplier} onChange={(e) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, spin: { ...c.gamification.spin, pointsMultiplier: Number(e.target.value) || 0 } } }))} className={PWA_INPUT} /></Field>
+                      <SettingsSection title="Games" desc="Enable games, gate them by order value, cap plays and set availability hours (IST)."
+                        footer={<SaveButton busy={pwaBusy} onClick={() => pwaSave({ action: 'gamification_save', ...pwaCfg.gamification }, 'Games saved')}>Save games</SaveButton>}>
+                        <Toggle label="Games enabled" desc="Master switch for all in-app games." on={pwaCfg.gamification.enabledGlobal} onChange={(v) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, enabledGlobal: v } }))} />
+                        <div className="grid sm:grid-cols-2 gap-3 max-w-md">
+                          <Field label="Max games / day" hint="0 = unlimited"><input type="number" min={0} value={pwaCfg.gamification.maxGamesPerDay} onChange={(e) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, maxGamesPerDay: Number(e.target.value) || 0 } }))} className="inp" /></Field>
+                          <Field label="Spin points multiplier"><input type="number" min={0} step={0.1} value={pwaCfg.gamification.spin.pointsMultiplier} onChange={(e) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, spin: { ...c.gamification.spin, pointsMultiplier: Number(e.target.value) || 0 } } }))} className="inp" /></Field>
+                          <Field label="Available from (IST hour)" hint="blank = always"><input type="number" min={0} max={23} value={pwaCfg.gamification.availability?.startHour ?? ''} onChange={(e) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, availability: e.target.value === '' ? null : { startHour: Number(e.target.value) || 0, endHour: c.gamification.availability?.endHour ?? 23 } } }))} className="inp" /></Field>
+                          <Field label="Available to (IST hour)"><input type="number" min={0} max={23} value={pwaCfg.gamification.availability?.endHour ?? ''} onChange={(e) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, availability: c.gamification.availability ? { ...c.gamification.availability, endHour: Number(e.target.value) || 0 } : { startHour: 0, endHour: Number(e.target.value) || 0 } } }))} className="inp" /></Field>
                         </div>
-                        <div className="grid grid-cols-2 gap-3 max-w-md">
-                          <Field label="Available from (IST hour, blank = always)"><input type="number" min={0} max={23} value={pwaCfg.gamification.availability?.startHour ?? ''} onChange={(e) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, availability: e.target.value === '' ? null : { startHour: Number(e.target.value) || 0, endHour: c.gamification.availability?.endHour ?? 23 } } }))} className={PWA_INPUT} /></Field>
-                          <Field label="Available to (IST hour)"><input type="number" min={0} max={23} value={pwaCfg.gamification.availability?.endHour ?? ''} onChange={(e) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, availability: c.gamification.availability ? { ...c.gamification.availability, endHour: Number(e.target.value) || 0 } : { startHour: 0, endHour: Number(e.target.value) || 0 } } }))} className={PWA_INPUT} /></Field>
-                        </div>
-                        <div className="grid gap-2">
+                        <div className="flex flex-col gap-2">
                           <b className="text-sm">Per-game controls</b>
+                          <div className="hidden sm:grid grid-cols-[1fr_56px_130px_90px] gap-2 px-2.5 text-[11px] font-bold uppercase tracking-wide" style={{ color: 'var(--ink-3)' }}>
+                            <span>Game</span><span>On</span><span>Min order ₹</span><span>× points</span>
+                          </div>
                           {DEFAULT_GAME_KEYS.map((key) => {
                             const g = pwaCfg.gamification.games.find((x) => x.key === key) ?? { key, enabled: true, minOrderPaise: 0, pointsMultiplier: 1 };
                             const upd = (patch: Partial<typeof g>) => setCfg((c) => ({ ...c, gamification: { ...c.gamification, games: c.gamification.games.some((x) => x.key === key) ? c.gamification.games.map((x) => (x.key === key ? { ...x, ...patch } : x)) : [...c.gamification.games, { ...g, ...patch }] } }));
                             return (
-                              <div key={key} className="flex flex-wrap items-center gap-3 p-2.5 rounded-xl" style={{ background: 'var(--paper-3)' }}>
-                                <b className="text-sm w-32 capitalize">{key.replace(/_/g, ' ')}</b>
-                                <label className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={g.enabled} onChange={(e) => upd({ enabled: e.target.checked })} /> on</label>
-                                <label className="flex items-center gap-1.5 text-xs">min order ₹<input type="number" min={0} value={Math.round(g.minOrderPaise / 100)} onChange={(e) => upd({ minOrderPaise: (Number(e.target.value) || 0) * 100 })} className="w-20 p-1.5 rounded-lg border text-sm" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} /></label>
-                                <label className="flex items-center gap-1.5 text-xs">×pts<input type="number" min={0} step={0.1} value={g.pointsMultiplier} onChange={(e) => upd({ pointsMultiplier: Number(e.target.value) || 0 })} className="w-16 p-1.5 rounded-lg border text-sm" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} /></label>
+                              <div key={key} className="grid grid-cols-1 sm:grid-cols-[1fr_56px_130px_90px] sm:items-center gap-2 p-2.5 rounded-xl" style={{ background: 'var(--paper-3)' }}>
+                                <b className="text-sm capitalize">{key.replace(/_/g, ' ')}</b>
+                                <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={g.enabled} onChange={(e) => upd({ enabled: e.target.checked })} /><span className="sm:hidden">Enabled</span></label>
+                                <label className="flex items-center gap-2 text-xs"><span className="sm:hidden whitespace-nowrap">Min ₹</span><input type="number" min={0} value={Math.round(g.minOrderPaise / 100)} onChange={(e) => upd({ minOrderPaise: (Number(e.target.value) || 0) * 100 })} className="inp" style={{ minHeight: 38 }} /></label>
+                                <label className="flex items-center gap-2 text-xs"><span className="sm:hidden whitespace-nowrap">× pts</span><input type="number" min={0} step={0.1} value={g.pointsMultiplier} onChange={(e) => upd({ pointsMultiplier: Number(e.target.value) || 0 })} className="inp" style={{ minHeight: 38 }} /></label>
                               </div>
                             );
                           })}
                         </div>
-                        <button onClick={() => pwaSave({ action: 'gamification_save', ...pwaCfg.gamification }, 'Gamification saved')} disabled={pwaBusy} className="btn btn-primary w-fit disabled:opacity-50">Save gamification</button>
-                      </section>
+                      </SettingsSection>
                     )}
 
                     {/* REWARD POINTS */}
                     {pwaTab === 'points' && (
-                      <section className="card p-5 flex flex-col gap-3 max-w-md">
-                        <div><h4 className="font-bold">Reward Points</h4><p className="text-xs text-ink-3">How fast customers earn points from spend (applied at order settlement).</p></div>
-                        <Field label="₹ spent to earn 1 point">
-                          <input type="number" min={1} value={Math.round(pwaCfg.points.earnRatePaisePerPoint / 100)} onChange={(e) => setCfg((c) => ({ ...c, points: { earnRatePaisePerPoint: Math.max(1, Number(e.target.value) || 1) * 100 } }))} className={PWA_INPUT} />
+                      <SettingsSection title="Reward Points" desc="How fast customers earn points from spend (applied at order settlement)." className="max-w-md"
+                        footer={<SaveButton busy={pwaBusy} onClick={() => pwaSave({ action: 'points_save', earnRatePaisePerPoint: pwaCfg.points.earnRatePaisePerPoint }, 'Points rate saved')} />}>
+                        <Field label="₹ spent to earn 1 point" hint="e.g. 10 = 1 point per ₹10 spent (the current default).">
+                          <input type="number" min={1} value={Math.round(pwaCfg.points.earnRatePaisePerPoint / 100)} onChange={(e) => setCfg((c) => ({ ...c, points: { earnRatePaisePerPoint: Math.max(1, Number(e.target.value) || 1) * 100 } }))} className="inp" />
                         </Field>
-                        <p className="text-[11px] text-ink-3">e.g. 10 = 1 point per ₹10 spent (the current default).</p>
-                        <button onClick={() => pwaSave({ action: 'points_save', earnRatePaisePerPoint: pwaCfg.points.earnRatePaisePerPoint }, 'Points rate saved')} disabled={pwaBusy} className="btn btn-primary w-fit disabled:opacity-50">Save</button>
-                      </section>
+                      </SettingsSection>
                     )}
 
                     {/* WALLET */}
                     {pwaTab === 'wallet' && (
-                      <section className="card p-5 flex flex-col gap-3 max-w-md">
-                        <div><h4 className="font-bold">Wallet Conversion</h4><p className="text-xs text-ink-3">Let customers spend points as a ₹ discount at checkout.</p></div>
-                        <Toggle label="Wallet redemption enabled" on={pwaCfg.wallet.enabled} onChange={(v) => setCfg((c) => ({ ...c, wallet: { ...c.wallet, enabled: v } }))} />
-                        <Field label="Points per ₹1 of discount"><input type="number" min={1} value={pwaCfg.wallet.pointsPerRupee} onChange={(e) => setCfg((c) => ({ ...c, wallet: { ...c.wallet, pointsPerRupee: Math.max(1, Number(e.target.value) || 1) } }))} className={PWA_INPUT} /></Field>
-                        <Field label="Max discount (% of bill)"><input type="number" min={0} max={100} value={pwaCfg.wallet.maxRedeemPctOfBill} onChange={(e) => setCfg((c) => ({ ...c, wallet: { ...c.wallet, maxRedeemPctOfBill: Number(e.target.value) || 0 } }))} className={PWA_INPUT} /></Field>
-                        <Field label="Min points to redeem"><input type="number" min={0} value={pwaCfg.wallet.minPointsToRedeem} onChange={(e) => setCfg((c) => ({ ...c, wallet: { ...c.wallet, minPointsToRedeem: Number(e.target.value) || 0 } }))} className={PWA_INPUT} /></Field>
-                        <button onClick={() => pwaSave({ action: 'wallet_save', ...pwaCfg.wallet }, 'Wallet saved')} disabled={pwaBusy} className="btn btn-primary w-fit disabled:opacity-50">Save wallet</button>
-                      </section>
+                      <SettingsSection title="Wallet Conversion" desc="Let customers spend points as a ₹ discount at checkout." className="max-w-md"
+                        footer={<SaveButton busy={pwaBusy} onClick={() => pwaSave({ action: 'wallet_save', ...pwaCfg.wallet }, 'Wallet saved')}>Save wallet</SaveButton>}>
+                        <Toggle label="Wallet redemption" desc={pwaCfg.wallet.enabled ? 'Customers can apply points as a discount.' : 'Off — points can’t be redeemed at checkout.'} on={pwaCfg.wallet.enabled} onChange={(v) => setCfg((c) => ({ ...c, wallet: { ...c.wallet, enabled: v } }))} />
+                        <Field label="Points per ₹1 of discount"><input type="number" min={1} value={pwaCfg.wallet.pointsPerRupee} onChange={(e) => setCfg((c) => ({ ...c, wallet: { ...c.wallet, pointsPerRupee: Math.max(1, Number(e.target.value) || 1) } }))} className="inp" /></Field>
+                        <Field label="Max discount (% of bill)"><input type="number" min={0} max={100} value={pwaCfg.wallet.maxRedeemPctOfBill} onChange={(e) => setCfg((c) => ({ ...c, wallet: { ...c.wallet, maxRedeemPctOfBill: Number(e.target.value) || 0 } }))} className="inp" /></Field>
+                        <Field label="Min points to redeem"><input type="number" min={0} value={pwaCfg.wallet.minPointsToRedeem} onChange={(e) => setCfg((c) => ({ ...c, wallet: { ...c.wallet, minPointsToRedeem: Number(e.target.value) || 0 } }))} className="inp" /></Field>
+                      </SettingsSection>
                     )}
 
-                    {/* LOYALTY */}
+                    {/* LOYALTY TIERS */}
                     {pwaTab === 'loyalty' && (
-                      <section className="card p-5 flex flex-col gap-3">
-                        <div><h4 className="font-bold">Loyalty Program</h4><p className="text-xs text-ink-3">Tier names and thresholds (qualify by spend OR visits). The stored “vip” tier is shown as your top-tier name.</p></div>
+                      <SettingsSection title="Loyalty Tiers" desc="Tier names and thresholds (qualify by spend OR visits). The stored “vip” tier is shown as your top-tier name."
+                        footer={<SaveButton busy={pwaBusy} onClick={() => pwaSave({ action: 'loyalty_save', tiers: pwaCfg.loyalty.tiers }, 'Loyalty saved')}>Save loyalty</SaveButton>}>
                         <div className="grid gap-2 max-w-2xl">
+                          <div className="hidden sm:grid grid-cols-[64px_1fr_130px_100px] gap-2 px-2.5 text-[11px] font-bold uppercase tracking-wide" style={{ color: 'var(--ink-3)' }}>
+                            <span>Tier</span><span>Display name</span><span>Min spend ₹</span><span>Min visits</span>
+                          </div>
                           {pwaCfg.loyalty.tiers.map((t, i) => (
-                            <div key={t.tier} className="flex flex-wrap items-center gap-2 p-2.5 rounded-xl" style={{ background: 'var(--paper-3)' }}>
-                              <span className="text-xs w-14 capitalize text-ink-3">{t.tier}</span>
-                              <input value={t.displayName} onChange={(e) => setCfg((c) => ({ ...c, loyalty: { rewards: c.loyalty.rewards, tiers: c.loyalty.tiers.map((x, j) => (j === i ? { ...x, displayName: e.target.value } : x)) } }))} className="w-32 p-1.5 rounded-lg border text-sm" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} />
-                              <label className="flex items-center gap-1.5 text-xs">min spend ₹<input type="number" min={0} value={Math.round(t.minSpendPaise / 100)} onChange={(e) => setCfg((c) => ({ ...c, loyalty: { rewards: c.loyalty.rewards, tiers: c.loyalty.tiers.map((x, j) => (j === i ? { ...x, minSpendPaise: (Number(e.target.value) || 0) * 100 } : x)) } }))} className="w-24 p-1.5 rounded-lg border text-sm" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} /></label>
-                              <label className="flex items-center gap-1.5 text-xs">min visits<input type="number" min={0} value={t.minVisits} onChange={(e) => setCfg((c) => ({ ...c, loyalty: { rewards: c.loyalty.rewards, tiers: c.loyalty.tiers.map((x, j) => (j === i ? { ...x, minVisits: Number(e.target.value) || 0 } : x)) } }))} className="w-20 p-1.5 rounded-lg border text-sm" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} /></label>
+                            <div key={t.tier} className="grid grid-cols-1 sm:grid-cols-[64px_1fr_130px_100px] sm:items-center gap-2 p-2.5 rounded-xl" style={{ background: 'var(--paper-3)' }}>
+                              <span className="text-xs capitalize text-ink-3 self-center">{t.tier}</span>
+                              <input value={t.displayName} onChange={(e) => setCfg((c) => ({ ...c, loyalty: { rewards: c.loyalty.rewards, tiers: c.loyalty.tiers.map((x, j) => (j === i ? { ...x, displayName: e.target.value } : x)) } }))} className="inp" style={{ minHeight: 38 }} />
+                              <label className="flex items-center gap-2 text-xs"><span className="sm:hidden whitespace-nowrap">Min ₹</span><input type="number" min={0} value={Math.round(t.minSpendPaise / 100)} onChange={(e) => setCfg((c) => ({ ...c, loyalty: { rewards: c.loyalty.rewards, tiers: c.loyalty.tiers.map((x, j) => (j === i ? { ...x, minSpendPaise: (Number(e.target.value) || 0) * 100 } : x)) } }))} className="inp" style={{ minHeight: 38 }} /></label>
+                              <label className="flex items-center gap-2 text-xs"><span className="sm:hidden whitespace-nowrap">Visits</span><input type="number" min={0} value={t.minVisits} onChange={(e) => setCfg((c) => ({ ...c, loyalty: { rewards: c.loyalty.rewards, tiers: c.loyalty.tiers.map((x, j) => (j === i ? { ...x, minVisits: Number(e.target.value) || 0 } : x)) } }))} className="inp" style={{ minHeight: 38 }} /></label>
                             </div>
                           ))}
                         </div>
-                        <button onClick={() => pwaSave({ action: 'loyalty_save', tiers: pwaCfg.loyalty.tiers }, 'Loyalty saved')} disabled={pwaBusy} className="btn btn-primary w-fit disabled:opacity-50">Save loyalty</button>
-                      </section>
+                      </SettingsSection>
                     )}
 
                     {/* QR TABLE */}
                     {pwaTab === 'table' && (
-                      <section className="card p-5 flex flex-col gap-3 max-w-md">
-                        <div><h4 className="font-bold">QR Table Configuration</h4><p className="text-xs text-ink-3">What the customer sees when they scan a table QR.</p></div>
-                        <Field label="Welcome prefix"><input value={pwaCfg.table.welcomePrefix} onChange={(e) => setCfg((c) => ({ ...c, table: { ...c.table, welcomePrefix: e.target.value } }))} className={PWA_INPUT} /></Field>
-                        <p className="text-[11px] text-ink-3">Shown as “{pwaCfg.table.welcomePrefix} 12”.</p>
-                        <Toggle label="Allow manual table pick when QR has no table" on={pwaCfg.table.allowManualPick} onChange={(v) => setCfg((c) => ({ ...c, table: { ...c.table, allowManualPick: v } }))} />
-                        <button onClick={() => pwaSave({ action: 'table_save', ...pwaCfg.table }, 'Table config saved')} disabled={pwaBusy} className="btn btn-primary w-fit disabled:opacity-50">Save</button>
-                      </section>
+                      <SettingsSection title="QR Table" desc="What the customer sees when they scan a table QR." className="max-w-md"
+                        footer={<SaveButton busy={pwaBusy} onClick={() => pwaSave({ action: 'table_save', ...pwaCfg.table }, 'Table config saved')} />}>
+                        <Field label="Welcome prefix" hint={`Shown as “${pwaCfg.table.welcomePrefix} 12”.`}><input value={pwaCfg.table.welcomePrefix} onChange={(e) => setCfg((c) => ({ ...c, table: { ...c.table, welcomePrefix: e.target.value } }))} className="inp" /></Field>
+                        <Toggle label="Manual table pick" desc="Let guests choose a table when the scanned QR has none." on={pwaCfg.table.allowManualPick} onChange={(v) => setCfg((c) => ({ ...c, table: { ...c.table, allowManualPick: v } }))} />
+                      </SettingsSection>
                     )}
 
-                    {/* REGISTRATION */}
+                    {/* CUSTOMER LOGIN (OTP) */}
                     {pwaTab === 'registration' && (
-                      <section className="card p-5 flex flex-col gap-3 max-w-md">
-                        <div><h4 className="font-bold">Customer Registration</h4><p className="text-xs text-ink-3">Ask the customer for name &amp; mobile before they use the app. Returning customers are recognised by phone.</p></div>
-                        <Toggle label="Require registration" on={pwaCfg.registration.enabled} onChange={(v) => setCfg((c) => ({ ...c, registration: { ...c.registration, enabled: v } }))} />
-                        <Toggle label="Collect name (else mobile only)" on={pwaCfg.registration.collectName} onChange={(v) => setCfg((c) => ({ ...c, registration: { ...c.registration, collectName: v } }))} />
-                        <button onClick={() => pwaSave({ action: 'registration_save', ...pwaCfg.registration }, 'Registration saved')} disabled={pwaBusy} className="btn btn-primary w-fit disabled:opacity-50">Save</button>
-                      </section>
+                      <SettingsSection title="Customer Login" desc="Require customers to verify their mobile with a one-time code (OTP) before ordering. Default: off." className="max-w-md"
+                        footer={<SaveButton busy={pwaBusy} onClick={() => pwaSave({ action: 'registration_save', ...pwaCfg.registration }, 'Customer login saved')} />}>
+                        <Toggle label="Require login (OTP)" desc={pwaCfg.registration.enabled ? 'Guests verify their mobile with a one-time code before using the app.' : 'Off — guests can browse and order without logging in.'} on={pwaCfg.registration.enabled} onChange={(v) => setCfg((c) => ({ ...c, registration: { ...c.registration, enabled: v } }))} />
+                        <Toggle label="Collect name" desc="Ask new customers for their name after they verify (otherwise mobile only)." on={pwaCfg.registration.collectName} onChange={(v) => setCfg((c) => ({ ...c, registration: { ...c.registration, collectName: v } }))} />
+                      </SettingsSection>
                     )}
 
                     {/* THEME */}
                     {pwaTab === 'theme' && (
-                      <section className="card p-5 flex flex-col gap-3 max-w-md">
-                        <div><h4 className="font-bold">PWA Theme</h4><p className="text-xs text-ink-3">Accent colour, logo and a hero tagline for the app home.</p></div>
-                        <Field label="Accent colour"><input type="color" value={pwaCfg.theme.accent || '#E8902A'} onChange={(e) => setCfg((c) => ({ ...c, theme: { ...c.theme, accent: e.target.value } }))} className="w-16 h-10 rounded-lg border" style={{ borderColor: 'var(--line-2)' }} /></Field>
-                        <Field label="Hero tagline"><input value={pwaCfg.theme.heroTagline} onChange={(e) => setCfg((c) => ({ ...c, theme: { ...c.theme, heroTagline: e.target.value } }))} placeholder="Freshly brewed, just for you" className={PWA_INPUT} /></Field>
-                        <div>
-                          <label className="block text-xs font-bold mb-1">Logo</label>
+                      <SettingsSection title="Theme" desc="Accent colour, logo and a hero tagline for the app home." className="max-w-md"
+                        footer={<SaveButton busy={pwaBusy} onClick={() => pwaSave({ action: 'theme_save', ...pwaCfg.theme }, 'Theme saved')}>Save theme</SaveButton>}>
+                        <Field label="Accent colour"><input type="color" value={pwaCfg.theme.accent || '#E8902A'} onChange={(e) => setCfg((c) => ({ ...c, theme: { ...c.theme, accent: e.target.value } }))} className="w-16 h-10 rounded-lg border cursor-pointer" style={{ borderColor: 'var(--line-2)' }} /></Field>
+                        <Field label="Hero tagline"><input value={pwaCfg.theme.heroTagline} onChange={(e) => setCfg((c) => ({ ...c, theme: { ...c.theme, heroTagline: e.target.value } }))} placeholder="Freshly brewed, just for you" className="inp" /></Field>
+                        <Field label="Logo">
                           <div className="flex items-center gap-3">
                             {pwaCfg.theme.logoUrl && <img src={pwaCfg.theme.logoUrl} alt="" className="rounded-lg object-contain" style={{ width: 44, height: 44, background: 'var(--paper-3)' }} />}
-                            <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (f) { const url = await uploadImage(f); if (url) setCfg((c) => ({ ...c, theme: { ...c.theme, logoUrl: url } })); } }} className="text-xs" />
+                            <label className="btn btn-sm cursor-pointer">
+                              {pwaCfg.theme.logoUrl ? 'Replace logo' : 'Upload logo'}
+                              <input type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) { const url = await uploadImage(f); if (url) setCfg((c) => ({ ...c, theme: { ...c.theme, logoUrl: url } })); } }} />
+                            </label>
+                            {pwaCfg.theme.logoUrl && <button onClick={() => setCfg((c) => ({ ...c, theme: { ...c.theme, logoUrl: null } }))} className="btn btn-danger btn-sm">Remove</button>}
                           </div>
-                        </div>
-                        <button onClick={() => pwaSave({ action: 'theme_save', ...pwaCfg.theme }, 'Theme saved')} disabled={pwaBusy} className="btn btn-primary w-fit disabled:opacity-50">Save theme</button>
-                      </section>
+                        </Field>
+                      </SettingsSection>
                     )}
                   </>
-                )}
+                  )}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -3327,36 +3339,36 @@ export default function DashboardClient({
                     <form onSubmit={handleSaveDevice} className="grid gap-3">
                       <div className="grid sm:grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs font-bold mb-1">Device name</label>
-                          <input value={deviceForm.name} onChange={(e) => setDeviceForm((p) => ({ ...p, name: e.target.value }))} required placeholder="e.g. Counter receipt printer" className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                          <label className="lbl">Device name</label>
+                          <input value={deviceForm.name} onChange={(e) => setDeviceForm((p) => ({ ...p, name: e.target.value }))} required placeholder="e.g. Counter receipt printer" className="inp" />
                         </div>
                         <div>
-                          <label className="block text-xs font-bold mb-1">Type</label>
-                          <select value={deviceForm.type} onChange={(e) => setDeviceForm((p) => ({ ...p, type: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                          <label className="lbl">Type</label>
+                          <select value={deviceForm.type} onChange={(e) => setDeviceForm((p) => ({ ...p, type: e.target.value }))} className="inp">
                             {DEVICE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.icon} {t.label}</option>)}
                           </select>
                         </div>
                       </div>
                       <div className="grid sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-xs font-bold mb-1">Connection</label>
-                          <select value={deviceForm.connection} onChange={(e) => setDeviceForm((p) => ({ ...p, connection: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                          <label className="lbl">Connection</label>
+                          <select value={deviceForm.connection} onChange={(e) => setDeviceForm((p) => ({ ...p, connection: e.target.value }))} className="inp">
                             {DEVICE_CONNECTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                           </select>
                         </div>
                         <div>
-                          <label className="block text-xs font-bold mb-1">{deviceForm.connection === 'network' ? 'IP address : port' : 'Device path / id'}</label>
-                          <input value={deviceForm.target} onChange={(e) => setDeviceForm((p) => ({ ...p, target: e.target.value }))} placeholder={deviceForm.connection === 'network' ? '192.168.1.50:9100' : 'optional'} className="w-full p-2.5 rounded-xl border text-sm outline-none font-mono" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                          <label className="lbl">{deviceForm.connection === 'network' ? 'IP address : port' : 'Device path / id'}</label>
+                          <input value={deviceForm.target} onChange={(e) => setDeviceForm((p) => ({ ...p, target: e.target.value }))} placeholder={deviceForm.connection === 'network' ? '192.168.1.50:9100' : 'optional'} className="inp font-mono" />
                         </div>
                         <div>
-                          <label className="block text-xs font-bold mb-1">Copies</label>
-                          <input type="number" min={1} max={5} value={deviceForm.copies} onChange={(e) => setDeviceForm((p) => ({ ...p, copies: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }} />
+                          <label className="lbl">Copies</label>
+                          <input type="number" min={1} max={5} value={deviceForm.copies} onChange={(e) => setDeviceForm((p) => ({ ...p, copies: e.target.value }))} className="inp" />
                         </div>
                       </div>
                       {deviceForm.type === 'kot_printer' && (
                         <div className="sm:max-w-[200px]">
-                          <label className="block text-xs font-bold mb-1">Kitchen station</label>
-                          <select value={deviceForm.station} onChange={(e) => setDeviceForm((p) => ({ ...p, station: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none capitalize" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                          <label className="lbl">Kitchen station</label>
+                          <select value={deviceForm.station} onChange={(e) => setDeviceForm((p) => ({ ...p, station: e.target.value }))} className="inp capitalize">
                             {['kitchen', 'bar', 'dessert'].map((s) => <option key={s} value={s}>{s}</option>)}
                           </select>
                         </div>
@@ -3399,7 +3411,7 @@ export default function DashboardClient({
                             <div className="flex items-center gap-2 shrink-0">
                               {!dev.isDefault && <button onClick={() => handleSetDefaultDevice(dev)} className="btn py-1 px-3 text-xs" style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>Set default</button>}
                               <button onClick={() => openDeviceForm(dev)} className="btn py-1 px-3 text-xs" style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>Edit</button>
-                              <button onClick={() => handleDeleteDevice(dev.id, dev.name)} className="btn py-1 px-3 text-xs" style={{ background: 'var(--paper-2)', border: '1px solid var(--chilli, #c0392b)', color: 'var(--chilli, #c0392b)' }}>Remove</button>
+                              <button onClick={() => handleDeleteDevice(dev.id, dev.name)} className="btn py-1 px-3 text-xs" style={{ background: 'var(--paper-2)', border: '1px solid var(--clay)', color: 'var(--clay)' }}>Remove</button>
                             </div>
                           </div>
                         );
@@ -3422,22 +3434,22 @@ export default function DashboardClient({
                   </div>
                   <div className="grid sm:grid-cols-3 gap-3">
                     <div>
-                      <label className="block text-xs font-bold mb-1">Action</label>
-                      <select value={auditFilters.action} onChange={(e) => setAuditFilters((f) => ({ ...f, action: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                      <label className="lbl">Action</label>
+                      <select value={auditFilters.action} onChange={(e) => setAuditFilters((f) => ({ ...f, action: e.target.value }))} className="inp">
                         <option value="">All actions</option>
                         {auditOptions.actions.map((a) => <option key={a} value={a}>{prettyAction(a)}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-bold mb-1">Entity</label>
-                      <select value={auditFilters.entity} onChange={(e) => setAuditFilters((f) => ({ ...f, entity: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none capitalize" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                      <label className="lbl">Entity</label>
+                      <select value={auditFilters.entity} onChange={(e) => setAuditFilters((f) => ({ ...f, entity: e.target.value }))} className="inp capitalize">
                         <option value="">All entities</option>
                         {auditOptions.entities.map((en) => <option key={en} value={en}>{en}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-bold mb-1">Staff</label>
-                      <select value={auditFilters.actorId} onChange={(e) => setAuditFilters((f) => ({ ...f, actorId: e.target.value }))} className="w-full p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-3)', borderColor: 'var(--line-2)' }}>
+                      <label className="lbl">Staff</label>
+                      <select value={auditFilters.actorId} onChange={(e) => setAuditFilters((f) => ({ ...f, actorId: e.target.value }))} className="inp">
                         <option value="">All staff</option>
                         {auditOptions.staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
@@ -3479,7 +3491,7 @@ export default function DashboardClient({
                                       <div key={row.key} className="grid sm:grid-cols-[160px_1fr] gap-1 sm:gap-3 items-start">
                                         <span className="text-xs font-bold">{row.key}</span>
                                         <span className="text-xs font-mono break-all">
-                                          <span style={{ color: 'var(--chilli, #c0392b)' }}>{row.before}</span>
+                                          <span style={{ color: 'var(--clay)' }}>{row.before}</span>
                                           <span className="text-ink-3"> → </span>
                                           <span style={{ color: 'var(--cardamom-d)' }}>{row.after}</span>
                                         </span>
@@ -3527,7 +3539,7 @@ export default function DashboardClient({
                 <button onClick={() => printTableQr(qrTable)} className="btn btn-primary py-2.5 text-sm">Print</button>
                 <a href={tableQrImageUrl(qrTable.qrToken, 800)} download={`qr-${qrTable.label}.png`} target="_blank" rel="noopener noreferrer" className="btn py-2.5 text-sm text-center" style={{ background: 'var(--paper-3)', border: '1px solid var(--line)' }}>Download</a>
                 <button onClick={() => copyTableLink(qrTable)} className="btn py-2.5 text-sm" style={{ background: 'var(--paper-3)', border: '1px solid var(--line)' }}>Copy link</button>
-                <button onClick={() => handleRegenerateQr(qrTable)} disabled={floorBusy} className="btn py-2.5 text-sm disabled:opacity-50" style={{ background: 'var(--paper-3)', border: '1px solid var(--chilli, #c0392b)', color: 'var(--chilli, #c0392b)' }}>Rotate QR</button>
+                <button onClick={() => handleRegenerateQr(qrTable)} disabled={floorBusy} className="btn py-2.5 text-sm disabled:opacity-50" style={{ background: 'var(--paper-3)', border: '1px solid var(--clay)', color: 'var(--clay)' }}>Rotate QR</button>
               </div>
             </div>
           </div>
@@ -3637,13 +3649,21 @@ function Line({ label, val }: { label: string; val: string }) {
   );
 }
 
-function KpiCard({ label, value, tone }: { label: string; value: string; tone?: 'cardamom' | 'gold' }) {
+function KpiCard({ label, value, n, format, tone, index = 0 }: { label: string; value?: string; n?: number; format?: (x: number) => string; tone?: 'cardamom' | 'gold'; index?: number }) {
   const color = tone === 'cardamom' ? 'var(--cardamom-d)' : tone === 'gold' ? 'var(--gold)' : undefined;
   return (
-    <section className="card p-4">
+    <motion.section
+      className="card card-glow p-4"
+      initial={{ opacity: 0, y: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.55, ease: [0.25, 0.8, 0.25, 1], delay: index * 0.08 }}
+      whileHover={{ y: -3 }}
+    >
       <span className="block text-xs mb-2 text-ink-3">{label}</span>
-      <span className="block text-2xl md:text-3xl font-bold tnum font-mono" style={{ color }}>{value}</span>
-    </section>
+      <span className="block text-2xl md:text-3xl font-bold tnum font-mono" style={{ color }}>
+        {n !== undefined ? <CountUp value={n} format={format ?? ((x) => x.toLocaleString('en-IN'))} /> : value}
+      </span>
+    </motion.section>
   );
 }
 
@@ -3801,28 +3821,65 @@ function Assistant() {
   );
 }
 
-/* ============================ PWA settings helpers ============================ */
-const PWA_INPUT = 'w-full p-2.5 rounded-xl border text-sm outline-none bg-[var(--paper-3)] border-[var(--line-2)]';
+/* ============================ Settings primitives ============================ */
+/* Reuse the app's global form classes (.inp/.lbl/.help) so every settings panel
+   looks identical. PWA_INPUT is kept as an alias so existing call-sites upgrade. */
+const PWA_INPUT = 'inp';
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-bold mb-1">{label}</label>
+      <label className="lbl">{label}</label>
       {children}
+      {hint && <p className="help">{hint}</p>}
     </div>
   );
 }
 
-function Toggle({ label, on, onChange }: { label: string; on: boolean; onChange: (v: boolean) => void }) {
+/** One toggle for the whole app: label + optional description + animated switch. */
+function Toggle({ label, desc, on, onChange, disabled }: { label: string; desc?: string; on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)} className="flex items-center justify-between gap-3 p-3 rounded-xl border w-full text-left" style={{ borderColor: 'var(--line)', background: 'var(--paper-3)' }}>
-      <span className="text-sm font-semibold">{label}</span>
+    <button type="button" role="switch" aria-checked={on} disabled={disabled} onClick={() => onChange(!on)} className="flex items-center justify-between gap-3 p-3 rounded-xl border w-full text-left disabled:opacity-50" style={{ borderColor: 'var(--line)', background: 'var(--paper-3)' }}>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold">{label}</span>
+        {desc && <span className="block text-xs" style={{ color: 'var(--ink-3)' }}>{desc}</span>}
+      </span>
       <span className="relative shrink-0 rounded-full transition-colors" style={{ width: 44, height: 26, background: on ? 'var(--cardamom)' : 'var(--line-2)' }}>
         <span className="absolute top-[3px] rounded-full bg-white transition-all" style={{ width: 20, height: 20, left: on ? 21 : 3, boxShadow: 'var(--sh-1)' }} />
       </span>
     </button>
   );
 }
+
+/** Standard settings card: header (title + subtitle), body, optional footer (save row). */
+function SettingsSection({ title, desc, children, footer, className = '' }: { title: string; desc?: string; children: React.ReactNode; footer?: React.ReactNode; className?: string }) {
+  return (
+    <section className={`card p-5 flex flex-col gap-4 ${className}`}>
+      <div>
+        <h4 className="font-bold">{title}</h4>
+        {desc && <p className="text-xs text-ink-3">{desc}</p>}
+      </div>
+      {children}
+      {footer && <div className="flex flex-wrap items-center gap-2 pt-1">{footer}</div>}
+    </section>
+  );
+}
+
+/** Consistent save affordance with a busy spinner. */
+function SaveButton({ busy, onClick, children = 'Save changes' }: { busy: boolean; onClick: () => void; children?: React.ReactNode }) {
+  return (
+    <button onClick={onClick} disabled={busy} className="btn btn-primary w-fit disabled:opacity-50">
+      {busy ? (<><span className="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />Saving…</>) : children}
+    </button>
+  );
+}
+
+/* Grouped sub-navigation for the PWA settings panel (keys map to pwaTab values). */
+const PWA_NAV: { group: string; items: [string, string][] }[] = [
+  { group: 'Home & Appearance', items: [['theme', 'Theme'], ['home', 'Home Layout'], ['featured', 'Featured Dishes'], ['banners', 'Banners']] },
+  { group: 'Access & Ordering', items: [['registration', 'Customer Login'], ['table', 'QR Table']] },
+  { group: 'Rewards & Games', items: [['points', 'Reward Points'], ['wallet', 'Wallet'], ['loyalty', 'Loyalty Tiers'], ['gamification', 'Games']] },
+];
 
 function PwaFeaturedForm({ items, busy, uploadImage, onAdd }: {
   items: { id: string; name: string; pricePaise: number; categoryName: string | null }[];
@@ -3835,20 +3892,28 @@ function PwaFeaturedForm({ items, busy, uploadImage, onAdd }: {
   const [priority, setPriority] = useState('0');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   return (
-    <div className="flex flex-wrap items-end gap-3 p-3 rounded-xl" style={{ background: 'var(--paper-3)' }}>
+    <div className="flex flex-wrap items-end gap-3 p-3 rounded-xl border" style={{ background: 'var(--paper-2)', borderColor: 'var(--line)' }}>
       <Field label="Dish">
-        <select value={itemId} onChange={(e) => setItemId(e.target.value)} className="p-2.5 rounded-xl border text-sm outline-none min-w-[180px]" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }}>
+        <select value={itemId} onChange={(e) => setItemId(e.target.value)} className="inp min-w-[180px]">
           <option value="">Select a dish…</option>
           {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
         </select>
       </Field>
       <Field label="Label">
-        <select value={label} onChange={(e) => setLabel(e.target.value)} className="p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }}>
+        <select value={label} onChange={(e) => setLabel(e.target.value)} className="inp">
           {FEATURED_LABELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
         </select>
       </Field>
-      <Field label="Priority"><input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} className="w-20 p-2.5 rounded-xl border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line-2)' }} /></Field>
-      <Field label="Image override (optional)"><input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setImageUrl(await uploadImage(f)); }} className="text-xs" /></Field>
+      <Field label="Priority"><input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} className="inp w-24" /></Field>
+      <Field label="Image override (optional)">
+        <div className="flex items-center gap-2">
+          {imageUrl && <img src={imageUrl} alt="" className="rounded object-cover" style={{ width: 40, height: 40 }} />}
+          <label className="btn btn-sm cursor-pointer">
+            {imageUrl ? 'Replace image' : 'Choose image'}
+            <input type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setImageUrl(await uploadImage(f)); }} />
+          </label>
+        </div>
+      </Field>
       <button
         disabled={busy || !itemId}
         onClick={async () => { if (await onAdd({ itemId, label, priority: Number(priority) || 0, imageUrl })) { setItemId(''); setImageUrl(null); } }}
@@ -3870,11 +3935,14 @@ function PwaBannerForm({ busy, uploadImage, onAdd }: {
   const [endAt, setEndAt] = useState('');
   const [order, setOrder] = useState('0');
   return (
-    <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-xl" style={{ background: 'var(--paper-3)' }}>
+    <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-xl border" style={{ background: 'var(--paper-2)', borderColor: 'var(--line)' }}>
       <Field label="Poster image">
         <div className="flex items-center gap-2">
           {imageUrl && <img src={imageUrl} alt="" className="rounded object-cover" style={{ width: 56, height: 34 }} />}
-          <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setImageUrl(await uploadImage(f)); }} className="text-xs" />
+          <label className="btn btn-sm cursor-pointer">
+            {imageUrl ? 'Replace image' : 'Choose image'}
+            <input type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setImageUrl(await uploadImage(f)); }} />
+          </label>
         </div>
       </Field>
       <Field label="Title"><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Buy 2 Get 1 Free" className={PWA_INPUT} /></Field>
