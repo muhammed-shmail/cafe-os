@@ -47,18 +47,30 @@ export async function resolveTable(qrToken?: string | null) {
     });
     if (t) return t;
   }
-  // No valid token: fall back ONLY within the host's tenant — never across
-  // tenants (the previous global lookup could return another cafe's table).
-  const tenantId = await resolveTenantIdFromHost(headers().get('host'));
-  if (!tenantId) return null;
+  // No valid token: fall back within the host's tenant — never across tenants
+  // (the previous global lookup could return another cafe's table).
+  let tenantId = await resolveTenantIdFromHost(headers().get('host'));
+  if (!tenantId) {
+    // Single-tenant deployment (e.g. the Railway URL carries no tenant subdomain
+    // and DEV_TENANT_SUBDOMAIN isn't set): use the only tenant. This mirrors the
+    // PIN-login convenience fallback (app/api/auth/login/route.ts). Safe — with
+    // exactly one tenant there's no cross-tenant ambiguity; with several we must
+    // not guess, so bail rather than risk leaking another cafe's table.
+    const tenants = await prisma.tenant.findMany({ select: { id: true }, take: 2 });
+    if (tenants.length !== 1) return null;
+    tenantId = tenants[0]!.id;
+  }
   const recent = await prisma.order.findFirst({
     where: { status: { in: ['open', 'in_kitchen', 'ready'] }, tableId: { not: null }, outlet: { tenantId } },
     orderBy: { placedAt: 'desc' },
     select: { tableId: true },
   });
-  const where = recent?.tableId ? { id: recent.tableId } : { label: 'T6', outlet: { tenantId } };
+  // Prefer the tenant's most recent live order's table; otherwise any table for
+  // the tenant (was hard-coded 'T6', which broke when no such table existed).
+  const where = recent?.tableId ? { id: recent.tableId } : { outlet: { tenantId } };
   return prisma.tableMap.findFirst({
     where,
+    orderBy: { label: 'asc' },
     include: { outlet: { select: { id: true, name: true, tenantId: true } } },
   });
 }
