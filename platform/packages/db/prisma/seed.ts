@@ -92,7 +92,7 @@ async function main() {
   await prisma.tenant.deleteMany({});
 
   const tenant = await prisma.tenant.create({
-    data: { name: 'Kaawa House', subdomain: 'kahwa', plan: 'growth', gstin: '29ABCDE1234F1Z5' },
+    data: { name: 'Kaawa House', subdomain: 'kaawa', plan: 'growth', gstin: '29ABCDE1234F1Z5' },
   });
 
   // Active subscription on the Growth plan + slot meters, so the control plane
@@ -213,9 +213,9 @@ async function main() {
     ],
   });
 
-  console.log(`✅  Seeded tenant=${tenant.id} outlet=${outlet.id} subdomain=kahwa`);
+  console.log(`✅  Seeded tenant=${tenant.id} outlet=${outlet.id} subdomain=kaawa`);
   console.log(`    Staff PINs → Owner 1111 · Cashier 2222 · Kitchen 3333`);
-  console.log(`    Super-admin → admin@nuro7.com / admin1234  (set DEV_TENANT_SUBDOMAIN=kahwa for local)`);
+  console.log(`    Super-admin → admin@nuro7.com / admin1234  (set DEV_TENANT_SUBDOMAIN=kaawa for local)`);
 }
 
 main()

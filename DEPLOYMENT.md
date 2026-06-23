@@ -34,7 +34,7 @@
    |----------|-------|
    | `DATABASE_URL` | Neon pooled connection string |
    | `DIRECT_URL` | Neon direct connection string |
-   | `DEV_TENANT_SUBDOMAIN` | Seeded tenant subdomain (e.g. `kahwa`) — **required for a single-tenant deploy** whose Railway URL has no tenant subdomain, so the customer PWA + PIN login resolve a tenant |
+   | `DEV_TENANT_SUBDOMAIN` | Seeded tenant subdomain (e.g. `kaawa`) — **required for a single-tenant deploy** whose Railway URL has no tenant subdomain, so the customer PWA + PIN login resolve a tenant |
    | `JWT_SECRET` | Long random string (e.g., `openssl rand -base64 48`) |
    | `GEMINI_API_KEY` | Your API key (from Google AI Studio) |
    | `RAZORPAY_KEY_ID` | Test or live key (when ready) |
