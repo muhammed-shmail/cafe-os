@@ -26,14 +26,23 @@ export default async function Home() {
       <div className="fixed top-4 right-4"><ThemeToggle /></div>
       <div className="max-w-3xl w-full">
         <p className="lux-eyebrow mb-4">Growth Operating System · for cafés</p>
-        <h1 className="font-display text-6xl md:text-7xl leading-[0.92] mb-3">
-          Cafe<span className="text-gold-d">OS</span>
-        </h1>
+        <div className="flex items-center gap-4 mb-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo chaya one.png" alt="Chaya.One" className="h-14 md:h-16 w-auto object-contain" />
+          <h1 className="font-display text-6xl md:text-7xl leading-[0.92]">
+            Cafe<span className="text-gold-d">OS</span>
+          </h1>
+        </div>
         <AlphaTag className="mb-6" />
-        <p className="text-ink-2 text-lg mb-10 max-w-xl leading-relaxed">
-          Production app (Phase 1). The <strong>POS</strong> is wired to the database and the
-          server-side GST engine. Other surfaces land next in the 3-week plan.
+        <p className="text-ink-2 text-lg mb-5 max-w-xl leading-relaxed">
+          Everything your café needs to run and grow — billing, kitchen, customers, and
+          insights in one beautifully simple system.
         </p>
+        <div className="flex flex-wrap gap-2 mb-10 max-w-xl">
+          {['⚡ GST Billing & KOT', '🔥 Live Kitchen Display', '🎁 Loyalty, Rewards & Games',
+            '📊 AI-Powered Analytics', '📦 Inventory & Suppliers', '💳 UPI & Card Payments']
+            .map((f) => <span key={f} className="pill">{f}</span>)}
+        </div>
         <div className="grid sm:grid-cols-2 gap-4">
           {visible.map((s) => {
             const Ic = s.Icon;
