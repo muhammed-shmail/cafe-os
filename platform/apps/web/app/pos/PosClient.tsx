@@ -201,7 +201,9 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
   }
 
   function printDoc(title: string, inner: string) {
-    const w = window.open('', '_blank', 'width=380,height=640');
+    // On phones a fixed-size pop-up is ignored/awkward — open a plain tab there.
+    const narrow = typeof window !== 'undefined' && window.innerWidth < 480;
+    const w = window.open('', '_blank', narrow ? '' : 'width=380,height=640');
     if (!w) { flash('Allow pop-ups to print'); return; }
     const close = '<' + '/script>';
     w.document.write(`<html><head><title>${title}</title><style>
@@ -379,7 +381,7 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
   }
 
   return (
-    <div className="grid grid-cols-[232px_1fr_360px] gap-4 p-4 h-screen max-md:grid-cols-1 max-md:h-auto">
+    <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_300px] lg:grid-cols-[232px_1fr_360px] gap-4 h-auto md:h-screen p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
       {/* left rail */}
       <aside className="flex flex-col gap-3.5">
         <div className="flex items-center justify-between">
@@ -601,12 +603,12 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
               {shownGroups.map((g) => (
                 <div key={g.key}>
                   <div className="text-[11px] font-bold uppercase tracking-wide mb-2.5" style={{ color: 'var(--ink-3)' }}>{g.name}</div>
-                  <div className="grid grid-cols-4 gap-3">{g.tables.map(renderTableButton)}</div>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">{g.tables.map(renderTableButton)}</div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-4 gap-3 p-5">
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 p-5">
               {(shownGroups.flatMap((g) => g.tables)).map(renderTableButton)}
             </div>
           )}

@@ -201,8 +201,8 @@ function fmt(secs: number) {
 }
 
 const kdsCss = `
-.kds-root { min-height: 100vh; background: radial-gradient(120% 80% at 50% -10%, #20160F, transparent 60%), var(--paper); color: var(--ink); padding: 18px 20px; }
-.kds-bar { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; }
+.kds-root { min-height: 100vh; background: radial-gradient(120% 80% at 50% -10%, #20160F, transparent 60%), var(--paper); color: var(--ink); padding: calc(18px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); }
+.kds-bar { display: flex; align-items: center; gap: 12px 18px; margin-bottom: 18px; flex-wrap: wrap; }
 .kds-title { font-family: var(--font-display); font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 12px; }
 .kds-title em { font-style: normal; color: var(--ink-3); font-size: 15px; font-family: var(--font-body); font-weight: 600; }
 .kds-live { width: 11px; height: 11px; border-radius: 99px; background: #56d364; animation: kpulse 1.6s infinite; }
@@ -220,7 +220,7 @@ const kdsCss = `
 .kleg { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
 .kleg-dot { width: 10px; height: 10px; border-radius: 99px; }
 .kleg-sep { margin-left: auto; color: var(--ink-3); }
-.kds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 14px; align-content: start; }
+.kds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 14px; align-content: start; }
 .ticket { text-align: left; background: var(--paper-2); border: 1px solid var(--line); border-top: 4px solid #56d364; border-radius: 14px; overflow: hidden; box-shadow: var(--sh-2); cursor: pointer; font-family: var(--font-body); animation: tin .3s ease both; transition: transform .12s, box-shadow .2s; }
 .ticket:hover { transform: translateY(-3px); }
 @keyframes tin { from { opacity: 0; transform: translateY(12px); } }

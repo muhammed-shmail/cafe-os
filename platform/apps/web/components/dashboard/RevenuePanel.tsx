@@ -91,7 +91,7 @@ export function RevenuePanel({ initialTrend }: { initialTrend: TrendPoint[] }) {
         </div>
 
         {/* headline stats */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Stat label="Total revenue" value={data.totalPaise} format={formatINR} tone />
           <Stat label="Orders" value={data.orders} format={(x) => x.toLocaleString('en-IN')} />
           <Stat label="Avg / order" value={data.aovPaise} format={formatINR} />

@@ -37,7 +37,7 @@ export function Modal({ open, onClose, title, children, footer, variant = 'dialo
   const isSheet = variant === 'sheet';
   return (
     <div
-      className={`scrim anim-fade z-[1000] flex ${isSheet ? 'items-end sm:items-center' : 'items-center'} justify-center p-0 sm:p-4`}
+      className={`scrim anim-fade z-[1000] flex justify-center sm:p-4 ${isSheet ? 'items-end sm:items-center p-0' : 'items-center p-2'}`}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       role="presentation"
     >

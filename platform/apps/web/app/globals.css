@@ -99,6 +99,46 @@
   .pill-danger { background: var(--danger-bg); color: var(--danger-ink); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
   .pill-info   { background: var(--info-bg);   color: var(--info-ink);   border-color: color-mix(in srgb, var(--info) 35%, transparent); }
 
+  /* ---- Responsive data table → stacked cards on mobile --------------- */
+  /* Keep ALL the table's normal classes (w-full, text-sm, …) and add `rtable`.
+     Below md each row collapses to a card; at md+ NOTHING here applies, so the
+     desktop table renders exactly as before. Usage:
+       <table class="rtable w-full …"> … <td data-label="Amount">₹120</td>
+     Each <td data-label> shows its column name on mobile (via ::before);
+     a <td> WITHOUT data-label (e.g. an actions cell) spans the full row. */
+  @media (max-width: 767px) {
+    .rtable { display: block; }
+    .rtable thead { display: none; }
+    .rtable tbody { display: grid; gap: 10px; }
+    .rtable tbody tr {
+      display: grid; gap: 2px;
+      background: var(--paper-3); border: 1px solid var(--line);
+      border-radius: 16px; padding: 11px 14px;
+    }
+    .rtable td {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 14px; min-width: 0; text-align: right;
+    }
+    .rtable td::before {
+      content: attr(data-label);
+      flex: 0 0 auto; text-align: left; text-transform: uppercase;
+      font-weight: 700; font-size: 10.5px; letter-spacing: .04em;
+      color: var(--ink-3);
+    }
+    .rtable td:not([data-label]) { justify-content: flex-start; text-align: left; }
+    .rtable td:not([data-label])::before { content: none; }
+  }
+
+  /* ---- Sub-tab bar — scrolls horizontally instead of overflowing ---- */
+  /* Drop-in for `flex gap-2 border-b` tab rows that have too many tabs to
+     fit a phone. Tabs keep their natural width and the row scrolls. */
+  .subtabs {
+    display: flex; gap: .5rem;
+    overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none;
+  }
+  .subtabs::-webkit-scrollbar { display: none; }
+  .subtabs > * { flex: 0 0 auto; }
+
   /* ---- Feedback: skeleton + spinner --------------------------------- */
   .skeleton {
     position: relative; overflow: hidden;

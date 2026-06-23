@@ -92,7 +92,7 @@ export default function CustomerManagement({ role, flash }: { role: string; flas
         <>
           {/* analytics widgets */}
           {a && (
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
               <Stat label="Total Customers" value={String(a.totalCustomers)} />
               <Stat label="New This Month" value={String(a.newThisMonth)} />
               <Stat label="Repeat Rate" value={`${a.repeatCustomerRate}%`} />
@@ -110,14 +110,14 @@ export default function CustomerManagement({ role, flash }: { role: string; flas
 
           {/* search + filters */}
           <div className="card p-4 grid gap-3">
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                 placeholder="Search name, mobile or customer ID…"
-                className="btn flex-1 min-w-[220px]" style={{ textAlign: 'left' }}
+                className="btn flex-1 sm:min-w-[220px]" style={{ textAlign: 'left' }}
               />
-              <button className="btn" onClick={() => { setPage(1); load(); }}>Search</button>
+              <button className="btn sm:w-auto" onClick={() => { setPage(1); load(); }}>Search</button>
             </div>
             <div className="flex gap-2 flex-wrap">
               {FILTERS.map((f) => (
@@ -130,8 +130,8 @@ export default function CustomerManagement({ role, flash }: { role: string; flas
           </div>
 
           {/* table */}
-          <div className="card p-0 overflow-auto">
-            <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
+          <div className="card p-2 sm:p-0 overflow-auto">
+            <table className="rtable w-full text-sm" style={{ borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ color: 'var(--ink-3)', textAlign: 'left' }}>
                   <Th>Customer</Th><Th>Mobile</Th><Th>Source</Th><Th>Orders</Th><Th>Spend</Th>
@@ -143,18 +143,18 @@ export default function CustomerManagement({ role, flash }: { role: string; flas
                 {!loading && data?.rows.length === 0 && <tr><td colSpan={9} className="p-6 text-center" style={{ color: 'var(--ink-3)' }}>No customers found.</td></tr>}
                 {!loading && data?.rows.map((r) => (
                   <tr key={r.id} className="cursor-pointer hover:opacity-80" style={{ borderTop: '1px solid var(--line)' }} onClick={() => setProfileId(r.id)}>
-                    <Td>
+                    <Td label="Customer">
                       <div className="font-bold">{r.name}</div>
                       <div className="text-[11px]" style={{ color: 'var(--ink-3)' }}>{r.tierName} · {r.id.slice(0, 8)}</div>
                     </Td>
-                    <Td>{r.phone ?? '—'}</Td>
-                    <Td>{SOURCE_LABEL[r.source] ?? r.source}</Td>
-                    <Td>{r.totalOrders}</Td>
-                    <Td>{formatINR(r.totalSpendPaise)}</Td>
-                    <Td>{r.points}</Td>
-                    <Td>{formatINR(r.walletBalancePaise)}</Td>
-                    <Td>{fmtDate(r.lastVisit)}</Td>
-                    <Td><StatusBadge status={r.status} /></Td>
+                    <Td label="Mobile">{r.phone ?? '—'}</Td>
+                    <Td label="Source">{SOURCE_LABEL[r.source] ?? r.source}</Td>
+                    <Td label="Orders">{r.totalOrders}</Td>
+                    <Td label="Spend">{formatINR(r.totalSpendPaise)}</Td>
+                    <Td label="Points">{r.points}</Td>
+                    <Td label="Wallet">{formatINR(r.walletBalancePaise)}</Td>
+                    <Td label="Last visit">{fmtDate(r.lastVisit)}</Td>
+                    <Td label="Status"><StatusBadge status={r.status} /></Td>
                   </tr>
                 ))}
               </tbody>
@@ -548,8 +548,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Th({ children }: { children: React.ReactNode }) {
   return <th className="px-3 py-2.5 text-[11px] uppercase tracking-wide font-bold">{children}</th>;
 }
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-3 py-2.5 align-top">{children}</td>;
+function Td({ children, label }: { children: React.ReactNode; label?: string }) {
+  return <td data-label={label} className="px-3 py-2.5 align-top">{children}</td>;
 }
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (

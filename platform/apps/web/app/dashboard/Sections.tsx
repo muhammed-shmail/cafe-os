@@ -477,7 +477,7 @@ function Staff({ d, refresh }: { d: StaffData; refresh: () => void }) {
                 <Empty>No scheduled shifts. Click &quot;Schedule Shift&quot; above to assign tasks.</Empty>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm border-collapse">
+                  <table className="rtable w-full text-sm border-collapse">
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--line)' }}>
                         <th className="pb-2 text-left text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Staff Name</th>
@@ -489,9 +489,9 @@ function Staff({ d, refresh }: { d: StaffData; refresh: () => void }) {
                     <tbody>
                       {d.shifts.map((s) => (
                         <tr key={s.id} style={{ borderBottom: '1px solid var(--line)' }}>
-                          <td className="py-3 font-semibold text-ink">{s.name}</td>
-                          <td className="py-3 text-ink-2">{formatShiftTime(s.startsAt, s.endsAt)}</td>
-                          <td className="py-3 text-ink-2 capitalize">{s.role ? (ROLE_LABELS[s.role as StaffRole] || s.role) : '—'}</td>
+                          <td className="py-3 font-semibold text-ink" data-label="Staff">{s.name}</td>
+                          <td className="py-3 text-ink-2" data-label="Schedule">{formatShiftTime(s.startsAt, s.endsAt)}</td>
+                          <td className="py-3 text-ink-2 capitalize" data-label="Role">{s.role ? (ROLE_LABELS[s.role as StaffRole] || s.role) : '—'}</td>
                           <td className="py-3 text-right">
                             <button
                               onClick={() => {
@@ -578,7 +578,7 @@ function Staff({ d, refresh }: { d: StaffData; refresh: () => void }) {
             <Card className="col-span-1 lg:col-span-2 p-5">
               <CardHead title={`Payroll Period · ${d.period}`} hint="Active team wages" />
               <div className="overflow-x-auto">
-                <table className="w-full text-sm border-collapse">
+                <table className="rtable w-full text-sm border-collapse">
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--line)' }}>
                       <th className="pb-2 text-left text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>Name</th>
@@ -593,12 +593,12 @@ function Staff({ d, refresh }: { d: StaffData; refresh: () => void }) {
                       if (!member?.active) return null;
                       return (
                         <tr key={p.staffId} style={{ borderBottom: '1px solid var(--line)' }}>
-                          <td className="py-3 font-semibold text-ink">{p.name}</td>
-                          <td className="py-3 text-ink-2">
+                          <td className="py-3 font-semibold text-ink" data-label="Name">{p.name}</td>
+                          <td className="py-3 text-ink-2" data-label="Wage plan">
                             {p.payType === 'hourly' && p.payRatePaise ? `${formatINR(p.payRatePaise)}/hr` :
                              p.payType === 'monthly' && p.payRatePaise ? `${formatINR(p.payRatePaise)}/mo` : 'Not configured'}
                           </td>
-                          <td className="py-3 text-right font-mono text-ink font-semibold">
+                          <td className="py-3 text-right font-mono text-ink font-semibold" data-label="Paid">
                             {formatINR(p.paidThisPeriodPaise)}
                           </td>
                           <td className="py-3 text-right">
@@ -1303,7 +1303,7 @@ function Table({ head, rows, alignRight = [] }: { head: string[]; rows: string[]
   const ar = new Set(alignRight);
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm border-collapse">
+      <table className="rtable w-full text-sm border-collapse">
         <thead>
           <tr>
             {head.map((h, i) => (
@@ -1317,6 +1317,7 @@ function Table({ head, rows, alignRight = [] }: { head: string[]; rows: string[]
               {r.map((c, ci) => (
                 <td
                   key={ci}
+                  data-label={head[ci]}
                   className={`py-2 ${ar.has(ci) ? 'text-right tnum' : 'text-left'} ${ci === 0 ? 'font-semibold' : ''}`}
                   style={{ borderBottom: '1px solid var(--line)', fontFamily: ar.has(ci) ? 'var(--font-mono)' : undefined, color: ci === 0 ? 'var(--ink)' : 'var(--ink-2)' }}
                 >

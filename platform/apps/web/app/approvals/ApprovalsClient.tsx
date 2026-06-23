@@ -171,8 +171,8 @@ function fmt(secs: number) {
 }
 
 const css = `
-.ap-root { min-height: 100vh; background: radial-gradient(120% 80% at 50% -10%, #20160F, transparent 60%), var(--paper); color: var(--ink); padding: 18px 20px; }
-.ap-bar { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; }
+.ap-root { min-height: 100vh; background: radial-gradient(120% 80% at 50% -10%, #20160F, transparent 60%), var(--paper); color: var(--ink); padding: calc(18px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); }
+.ap-bar { display: flex; align-items: center; gap: 12px 18px; margin-bottom: 18px; flex-wrap: wrap; }
 .ap-title { font-family: var(--font-display); font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 12px; }
 .ap-title em { font-style: normal; color: var(--ink-3); font-size: 15px; font-family: var(--font-body); font-weight: 600; }
 .ap-live { width: 11px; height: 11px; border-radius: 99px; background: #3B82F6; animation: appulse 1.6s infinite; }
@@ -183,7 +183,7 @@ const css = `
 .ap-link { font-size: 12.5px; font-weight: 700; color: var(--turmeric-d); text-decoration: none; }
 .ap-conn { font-size: 12px; font-weight: 800; }
 .ap-hint { margin: 24px auto; max-width: 520px; text-align: center; color: var(--ink-3); font-size: 14.5px; line-height: 1.6; background: var(--paper-2); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
-.ap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; align-content: start; }
+.ap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 14px; align-content: start; }
 .ap-card { background: var(--paper-2); border: 1px solid var(--line); border-top: 4px solid #3B82F6; border-radius: 14px; overflow: hidden; box-shadow: var(--sh-2); animation: apin .3s ease both; }
 @keyframes apin { from { opacity: 0; transform: translateY(12px); } }
 .ap-card.late { border-top-color: var(--clay); }
@@ -202,11 +202,18 @@ const css = `
 .ap-line-edit button:disabled { opacity: .4; cursor: default; }
 .ap-line-edit .ap-line-del { color: var(--clay); border-color: rgba(195,73,47,.35); }
 .ap-note { width: 100%; font-size: 11.5px; color: var(--ink-3); padding-left: 22px; font-style: italic; }
-.ap-foot { display: flex; align-items: center; gap: 10px; padding: 11px 14px; background: var(--paper-3); border-top: 1px solid var(--line); }
+.ap-foot { display: flex; align-items: center; gap: 10px; padding: 11px 14px; background: var(--paper-3); border-top: 1px solid var(--line); flex-wrap: wrap; }
 .ap-total { font-family: var(--font-mono); font-weight: 800; font-size: 15px; }
 .ap-actions { margin-left: auto; display: flex; gap: 8px; }
 .ap-reject, .ap-approve { padding: 8px 12px; border-radius: 10px; font-weight: 800; font-size: 12.5px; border: none; cursor: pointer; font-family: var(--font-body); }
 .ap-reject { background: rgba(195,73,47,.14); color: var(--clay); }
 .ap-approve { background: #34C759; color: #08310f; }
 .ap-reject:disabled, .ap-approve:disabled { opacity: .5; cursor: default; }
+/* Touch-first on phones/tablets: the qty steppers and accept/reject controls
+   meet the 44px target; desktop keeps the denser controls above. */
+@media (max-width: 767px) {
+  .ap-line-edit { gap: 8px; }
+  .ap-line-edit button { width: 44px; height: 44px; }
+  .ap-reject, .ap-approve { padding: 12px 18px; font-size: 14px; }
+}
 `;

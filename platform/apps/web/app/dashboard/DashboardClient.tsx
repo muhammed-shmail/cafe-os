@@ -22,6 +22,7 @@ import {
   ClipboardList, UtensilsCrossed, Package, Truck, Users, Settings, type LucideIcon,
 } from '@/components/ui';
 import { ShiftStatus } from '@/components/ShiftStatus';
+import { MobileDrawer, BottomNav, type NavItem } from '@/components/dashboard/MobileNav';
 
 type FloorTable = { id: string; label: string; seats: number; state: string; qrToken: string; floorId: string | null; activeOrders: number };
 type Floor = { id: string; name: string; sort: number };
@@ -39,6 +40,15 @@ const MENUS: { key: string; label: string; icon: LucideIcon }[] = [
   { key: 'customers', label: 'Customer Management', icon: Users },
   { key: 'menu', label: 'Menu Items', icon: UtensilsCrossed },
   { key: 'settings', label: 'Settings', icon: Settings },
+];
+
+/** Key actions surfaced in the mobile bottom nav (short labels); a 5th "More"
+ *  button opens the full drawer. Everything else stays reachable via the drawer. */
+const BOTTOM_NAV: { key: string; label: string; icon: LucideIcon }[] = [
+  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { key: 'orders', label: 'Orders', icon: ClipboardList },
+  { key: 'tables', label: 'Tables', icon: UtensilsCrossed },
+  { key: 'customers', label: 'Customers', icon: Users },
 ];
 
 /** Field-level diff of an audit entry's before/after JSON — only keys whose value changed. */
@@ -92,6 +102,8 @@ export default function DashboardClient({
       return next;
     });
   };
+  // Mobile-only slide-out drawer (the full menu); desktop uses the sidebar above.
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // 2. Navigation State
   const [activeMenu, setActiveMenu] = useState('dashboard');
@@ -1305,10 +1317,22 @@ export default function DashboardClient({
       </div>
       </motion.aside>
 
-      <main className="min-w-0 flex-1 p-5 md:p-7 flex flex-col gap-4">
+      <main className="min-w-0 flex-1 flex flex-col gap-4 px-5 pt-5 md:px-7 md:pt-7 pb-[calc(76px_+_env(safe-area-inset-bottom))] lg:pb-7">
         {/* Header */}
         <header className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Mobile: open the slide-out drawer (full menu) */}
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Open menu"
+              aria-expanded={drawerOpen}
+              aria-haspopup="dialog"
+              className="btn btn-icon btn-sm lg:hidden shrink-0"
+            >
+              <Menu size={18} aria-hidden />
+            </button>
+            {/* Desktop: collapse/expand the sidebar */}
             <button
               type="button"
               onClick={toggleSidebar}
@@ -1319,30 +1343,16 @@ export default function DashboardClient({
             >
               <Menu size={18} aria-hidden />
             </button>
-            <div>
-              <h1 className="font-display text-3xl md:text-4xl leading-tight">
+            <div className="min-w-0">
+              <h1 className="font-display text-2xl sm:text-3xl md:text-4xl leading-tight truncate">
                 {activeMenu === 'menu' ? 'Menu Items' : activeMenu.charAt(0).toUpperCase() + activeMenu.slice(1)}
               </h1>
-              <p className="text-xs" style={{ color: 'var(--ink-3)' }}>
+              <p className="text-xs truncate" style={{ color: 'var(--ink-3)' }}>
                 {outlet.name} · {isAdvanced ? 'Advanced Mode' : 'Beginner Mode'}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Mobile Nav Switcher */}
-            <select
-              value={activeMenu}
-              onChange={(e) => setActiveMenu(e.target.value)}
-              className="lg:hidden btn py-2"
-              aria-label="Navigate"
-            >
-              {MENUS.map((m) => (
-                <option key={m.key} value={m.key}>{m.label}</option>
-              ))}
-              {/* Reports lives under Settings but keep it selectable on mobile when active */}
-              {activeMenu === 'reports' && <option value="reports">Reports</option>}
-            </select>
-
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <span className="pill" style={{ color: connected ? 'var(--cardamom-d)' : 'var(--ink-3)' }}>
               <span
                 ref={liveDot}
@@ -1363,7 +1373,7 @@ export default function DashboardClient({
               {bellOpen && (
                 <>
                   <div className="fixed inset-0 z-[40]" onClick={() => setBellOpen(false)} />
-                  <div className="absolute right-0 mt-2 w-[320px] max-h-[440px] overflow-auto z-[50] rounded-2xl shadow-3" style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>
+                  <div className="absolute right-0 mt-2 w-[min(320px,calc(100vw_-_24px))] max-h-[440px] overflow-auto z-[50] rounded-2xl shadow-3" style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>
                     <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0" style={{ borderColor: 'var(--line)', background: 'var(--paper-2)' }}>
                       <b className="text-sm">Alerts</b>
                       {unread > 0 && <button onClick={markAllRead} className="text-xs font-bold" style={{ color: 'var(--turmeric-d)' }}>Mark all read</button>}
@@ -1578,7 +1588,7 @@ export default function DashboardClient({
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-2 border-b" style={{ borderColor: 'var(--line)' }}>
+            <div className="subtabs border-b" style={{ borderColor: 'var(--line)' }}>
               <button className={`pb-2 px-3 text-sm font-bold ${activeSubTab === 'active' ? 'border-b-2 border-turmeric text-ink' : 'text-ink-3'}`} onClick={() => setActiveSubTab('active')}>Active Orders</button>
               <button className={`pb-2 px-3 text-sm font-bold ${activeSubTab === 'bills' ? 'border-b-2 border-turmeric text-ink' : 'text-ink-3'}`} onClick={() => setActiveSubTab('bills')}>Billing & Bills</button>
             </div>
@@ -1634,7 +1644,7 @@ export default function DashboardClient({
                   <p className="text-sm text-ink-3">No settled invoices recorded yet.</p>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm border-collapse text-left">
+                    <table className="rtable w-full text-sm border-collapse text-left">
                       <thead>
                         <tr className="border-b" style={{ borderColor: 'var(--line)' }}>
                           <th className="pb-2">Bill No.</th>
@@ -1650,11 +1660,11 @@ export default function DashboardClient({
                           .slice(0, 15)
                           .map((o) => (
                             <tr key={o.id} onClick={() => setOrderDetail(o)} className="border-b cursor-pointer hover:bg-[var(--paper-3)]" style={{ borderColor: 'var(--line-2)' }}>
-                              <td className="py-2.5 font-bold">#{o.number}</td>
-                              <td className="py-2.5">{o.table?.label ?? 'Takeaway'}</td>
-                              <td className="py-2.5 font-mono">{formatINR(o.totalPaise)}</td>
-                              <td className="py-2.5 text-xs">{new Date(o.settledAt || o.placedAt).toLocaleString()}</td>
-                              <td className="py-2.5"><span className="pill text-[9px] bg-green-100 text-green-800">PAID</span></td>
+                              <td className="py-2.5 font-bold" data-label="Bill No.">#{o.number}</td>
+                              <td className="py-2.5" data-label="Table">{o.table?.label ?? 'Takeaway'}</td>
+                              <td className="py-2.5 font-mono" data-label="Amount">{formatINR(o.totalPaise)}</td>
+                              <td className="py-2.5 text-xs" data-label="Settled">{new Date(o.settledAt || o.placedAt).toLocaleString()}</td>
+                              <td className="py-2.5" data-label="Status"><span className="pill text-[9px] bg-green-100 text-green-800">PAID</span></td>
                             </tr>
                           ))}
                       </tbody>
@@ -2371,7 +2381,7 @@ export default function DashboardClient({
         {activeMenu === 'reports' && (
           <div className="flex flex-col gap-4">
             {/* Tabs */}
-            <div className="flex gap-2 border-b" style={{ borderColor: 'var(--line)' }}>
+            <div className="subtabs border-b" style={{ borderColor: 'var(--line)' }}>
               <button className={`pb-2 px-3 text-sm font-bold ${activeSubTab === 'daily' ? 'border-b-2 border-turmeric text-ink' : 'text-ink-3'}`} onClick={() => setActiveSubTab('daily')}>Daily Sales</button>
               <button className={`pb-2 px-3 text-sm font-bold ${activeSubTab === 'best' ? 'border-b-2 border-turmeric text-ink' : 'text-ink-3'}`} onClick={() => setActiveSubTab('best')}>Top Items</button>
               <button className={`pb-2 px-3 text-sm font-bold ${activeSubTab === 'gst' ? 'border-b-2 border-turmeric text-ink' : 'text-ink-3'}`} onClick={() => setActiveSubTab('gst')}>GST Report</button>
@@ -2387,7 +2397,7 @@ export default function DashboardClient({
               <section className="card p-5">
                 <h4 className="font-bold mb-3">Daily Sales Ledger</h4>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm border-collapse text-left">
+                  <table className="rtable w-full text-sm border-collapse text-left">
                     <thead>
                       <tr className="border-b" style={{ borderColor: 'var(--line)' }}>
                         <th className="pb-2">Date</th>
@@ -2400,11 +2410,11 @@ export default function DashboardClient({
                     <tbody>
                       {trend.map((t, idx) => (
                         <tr key={idx} className="border-b" style={{ borderColor: 'var(--line-2)' }}>
-                          <td className="py-2">{t.date} ({t.label})</td>
-                          <td className="py-2 font-mono">{t.orders}</td>
-                          <td className="py-2 font-mono">{formatINR(t.grossPaise)}</td>
-                          <td className="py-2 font-mono">{formatINR(0)}</td>
-                          <td className="py-2 font-mono">{formatINR(Math.round(t.grossPaise * 0.05))}</td>
+                          <td className="py-2" data-label="Date">{t.date} ({t.label})</td>
+                          <td className="py-2 font-mono" data-label="Orders">{t.orders}</td>
+                          <td className="py-2 font-mono" data-label="Revenue">{formatINR(t.grossPaise)}</td>
+                          <td className="py-2 font-mono" data-label="Discount">{formatINR(0)}</td>
+                          <td className="py-2 font-mono" data-label="Tax">{formatINR(Math.round(t.grossPaise * 0.05))}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2417,7 +2427,7 @@ export default function DashboardClient({
               <section className="card p-5">
                 <h4 className="font-bold mb-3">Top Selling Products</h4>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm border-collapse text-left">
+                  <table className="rtable w-full text-sm border-collapse text-left">
                     <thead>
                       <tr className="border-b" style={{ borderColor: 'var(--line)' }}>
                         <th className="pb-2">Product Name</th>
@@ -2428,9 +2438,9 @@ export default function DashboardClient({
                     <tbody>
                       {topItems.map((item, idx) => (
                         <tr key={idx} className="border-b" style={{ borderColor: 'var(--line-2)' }}>
-                          <td className="py-2 font-bold">{item.name}</td>
-                          <td className="py-2 font-mono">{item.qty}</td>
-                          <td className="py-2 font-mono">{formatINR(item.revenuePaise)}</td>
+                          <td className="py-2 font-bold" data-label="Product">{item.name}</td>
+                          <td className="py-2 font-mono" data-label="Qty sold">{item.qty}</td>
+                          <td className="py-2 font-mono" data-label="Gross revenue">{formatINR(item.revenuePaise)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2475,7 +2485,7 @@ export default function DashboardClient({
                         <p className="text-sm text-ink-3 py-4 text-center">No sales in this window yet.</p>
                       ) : (
                         <div className="overflow-x-auto">
-                          <table className="w-full text-sm border-collapse text-left">
+                          <table className="rtable w-full text-sm border-collapse text-left">
                             <thead>
                               <tr className="border-b" style={{ borderColor: 'var(--line)' }}>
                                 <th className="pb-2">GST slab</th>
@@ -2486,9 +2496,9 @@ export default function DashboardClient({
                             <tbody>
                               {salesGst.gst.byRate.map((r: any) => (
                                 <tr key={r.rate} className="border-b" style={{ borderColor: 'var(--line-2)' }}>
-                                  <td className="py-2 font-bold">{r.rate === 0 ? 'Tax-free (0%)' : `${r.rate}%`}</td>
-                                  <td className="py-2 font-mono text-right">{formatINR(r.revenuePaise)}</td>
-                                  <td className="py-2 font-mono text-right">{r.rate === 0 ? '—' : formatINR(r.estTaxPaise)}</td>
+                                  <td className="py-2 font-bold" data-label="GST slab">{r.rate === 0 ? 'Tax-free (0%)' : `${r.rate}%`}</td>
+                                  <td className="py-2 font-mono text-right" data-label="Revenue">{formatINR(r.revenuePaise)}</td>
+                                  <td className="py-2 font-mono text-right" data-label="Est. tax">{r.rate === 0 ? '—' : formatINR(r.estTaxPaise)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -2525,7 +2535,7 @@ export default function DashboardClient({
                 {/* hour-of-day heatmap */}
                 <section className="card p-5">
                   <h4 className="font-bold mb-3">Hour-of-day Heatmap</h4>
-                  <div className="grid grid-cols-24 gap-0.5 h-10 mt-6">
+                  <div className="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-0.5 h-10 mt-6">
                     {hourly.map((v, idx) => (
                       <div
                         key={idx}
@@ -2543,7 +2553,7 @@ export default function DashboardClient({
                 {/* menu engineering quadrant */}
                 <section className="card p-5 md:col-span-2">
                   <h4 className="font-bold mb-3">Menu Engineering Quadrant</h4>
-                  <div className="relative h-48 border rounded-xl mt-2" style={{ background: 'var(--paper-3)' }}>
+                  <div className="relative h-40 sm:h-48 lg:h-56 border rounded-xl mt-2" style={{ background: 'var(--paper-3)' }}>
                     {menuQuadrant.map((d) => (
                       <span
                         key={d.itemId}
@@ -2625,7 +2635,7 @@ export default function DashboardClient({
                 <form onSubmit={handleSaveProfile} className="flex flex-col gap-3">
                   <h4 className="font-bold">Store Profile</h4>
                   <Field label="Outlet Name"><input value={profile.name} onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))} required className="inp" /></Field>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <Field label="GSTIN"><input value={profile.gstin} onChange={(e) => setProfile((p) => ({ ...p, gstin: e.target.value }))} placeholder="None" className="inp" /></Field>
                     <Field label="State Code"><input value={profile.stateCode} onChange={(e) => setProfile((p) => ({ ...p, stateCode: e.target.value }))} placeholder="KA" maxLength={2} className="inp uppercase" /></Field>
                   </div>
@@ -2641,7 +2651,7 @@ export default function DashboardClient({
 
                   <Field label="Address">
                     <input value={profile.line1} onChange={(e) => setProfile((p) => ({ ...p, line1: e.target.value }))} placeholder="Street / area" className="inp mb-2" />
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <input value={profile.city} onChange={(e) => setProfile((p) => ({ ...p, city: e.target.value }))} placeholder="City" className="inp" />
                       <input value={profile.pincode} onChange={(e) => setProfile((p) => ({ ...p, pincode: e.target.value }))} placeholder="Pincode" className="inp" />
                     </div>
@@ -3566,18 +3576,27 @@ export default function DashboardClient({
                 <p className="text-sm text-ink-3">No transactions yet.</p>
               ) : (
                 <div className="grid gap-1.5">
-                  <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 text-[10px] font-bold uppercase text-ink-3 px-3">
+                  <div className="hidden sm:grid grid-cols-[1fr_auto_auto_auto] gap-3 text-[10px] font-bold uppercase text-ink-3 px-3">
                     <span>Entry</span><span className="text-right">Debit</span><span className="text-right">Credit</span><span className="text-right">Balance</span>
                   </div>
                   {statement.ledger.map((e: any) => (
-                    <div key={e.id} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 text-sm p-3 rounded-xl items-center" style={{ background: 'var(--paper-3)' }}>
+                    <div key={e.id} className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-1.5 sm:gap-3 text-sm p-3 rounded-xl sm:items-center" style={{ background: 'var(--paper-3)' }}>
                       <div>
                         <span className="font-bold">{e.label}</span>
                         <span className="block text-[11px] text-ink-3">{new Date(e.at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}</span>
                       </div>
-                      <span className="text-right font-mono" style={{ color: e.debitPaise ? 'var(--clay)' : 'var(--ink-3)' }}>{e.debitPaise ? formatINR(e.debitPaise) : '—'}</span>
-                      <span className="text-right font-mono" style={{ color: e.creditPaise ? 'var(--cardamom-d)' : 'var(--ink-3)' }}>{e.creditPaise ? formatINR(e.creditPaise) : '—'}</span>
-                      <span className="text-right font-mono font-bold">{formatINR(e.balancePaise)}</span>
+                      <span className="flex justify-between sm:block sm:text-right font-mono">
+                        <span className="sm:hidden text-[10px] font-bold uppercase text-ink-3">Debit</span>
+                        <span style={{ color: e.debitPaise ? 'var(--clay)' : 'var(--ink-3)' }}>{e.debitPaise ? formatINR(e.debitPaise) : '—'}</span>
+                      </span>
+                      <span className="flex justify-between sm:block sm:text-right font-mono">
+                        <span className="sm:hidden text-[10px] font-bold uppercase text-ink-3">Credit</span>
+                        <span style={{ color: e.creditPaise ? 'var(--cardamom-d)' : 'var(--ink-3)' }}>{e.creditPaise ? formatINR(e.creditPaise) : '—'}</span>
+                      </span>
+                      <span className="flex justify-between sm:block sm:text-right font-mono font-bold">
+                        <span className="sm:hidden text-[10px] font-bold uppercase text-ink-3">Balance</span>
+                        <span>{formatINR(e.balancePaise)}</span>
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -3633,10 +3652,31 @@ export default function DashboardClient({
       )}
 
       {toast && (
-        <div role="status" aria-live="polite" className="anim-slide-in fixed left-1/2 -translate-x-1/2 bottom-7 z-[9000] px-5 py-3 rounded-full font-bold text-sm shadow-3" style={{ background: 'var(--ink)', color: 'var(--paper-2)' }}>
+        <div role="status" aria-live="polite" className="anim-slide-in fixed left-1/2 -translate-x-1/2 bottom-[calc(76px_+_env(safe-area-inset-bottom))] lg:bottom-7 z-[9000] px-5 py-3 rounded-full font-bold text-sm shadow-3" style={{ background: 'var(--ink)', color: 'var(--paper-2)' }}>
           {toast}
         </div>
       )}
+
+      {/* Mobile navigation — slide-out drawer (full menu) + bottom nav (key actions) */}
+      <MobileDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        items={MENUS as NavItem[]}
+        activeKey={activeMenu}
+        onSelect={(k) => { setActiveMenu(k); setLiveOrders(0); }}
+        brand={outlet.brand}
+        role={staff.role}
+        plan={outlet.plan}
+        onLogout={logout}
+      />
+      <BottomNav
+        items={BOTTOM_NAV as NavItem[]}
+        activeKey={activeMenu}
+        onSelect={(k) => { setActiveMenu(k); setLiveOrders(0); }}
+        onMore={() => setDrawerOpen(true)}
+        drawerOpen={drawerOpen}
+        liveOrders={liveOrders}
+      />
     </div>
   );
 }
