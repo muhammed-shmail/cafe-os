@@ -393,15 +393,15 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
             </div>
             <span className="font-display font-bold text-[17px]">{(outlet.name.split('—')[0] ?? '').trim()}</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <ThemeToggle />
-            <ShiftStatus />
-          </div>
+          <ThemeToggle />
         </div>
         <div className="flex items-center gap-2 px-1 -mt-1">
           <span className="w-6 h-6 rounded-full grid place-items-center text-[11px] font-extrabold text-white" style={{ background: 'linear-gradient(135deg, var(--turmeric), var(--clay))' }}>{staff.name[0]}</span>
           <span className="text-[12.5px] font-bold">{staff.name}</span>
           <span className="pill" style={{ padding: '2px 8px', fontSize: '10px', textTransform: 'capitalize' }}>{staff.role}</span>
+        </div>
+        <div className="px-1">
+          <ShiftStatus />
         </div>
         <div className="flex rounded-full p-[3px] border" style={{ background: 'var(--paper-2)', borderColor: 'var(--line)' }}>
           {(['dine_in', 'takeaway'] as const).map((t) => (
