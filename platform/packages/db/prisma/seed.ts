@@ -1,5 +1,5 @@
 /**
- * Cafe OS — seed: one tenant ("Kahwa House"), one outlet, staff (PIN),
+ * Cafe OS — seed: one tenant ("Kaawa House"), one outlet, staff (PIN),
  * categories, menu (with GST rates + stations), modifiers, tables, one customer.
  * Mirrors the prototype's data so the POS works against a real DB immediately.
  *
@@ -92,7 +92,7 @@ async function main() {
   await prisma.tenant.deleteMany({});
 
   const tenant = await prisma.tenant.create({
-    data: { name: 'Kahwa House', subdomain: 'kahwa', plan: 'growth', gstin: '29ABCDE1234F1Z5' },
+    data: { name: 'Kaawa House', subdomain: 'kahwa', plan: 'growth', gstin: '29ABCDE1234F1Z5' },
   });
 
   // Active subscription on the Growth plan + slot meters, so the control plane
@@ -112,7 +112,7 @@ async function main() {
   const outlet = await prisma.outlet.create({
     data: {
       tenantId: tenant.id,
-      name: 'Kahwa House — Koramangala',
+      name: 'Kaawa House — Koramangala',
       stateCode: 'KA',
       gstin: '29ABCDE1234F1Z5',
       address: { line1: '5th Block, Koramangala', city: 'Bengaluru', pincode: '560095' },
