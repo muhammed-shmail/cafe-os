@@ -26,9 +26,9 @@ export default async function Home() {
       <div className="fixed top-4 right-4"><ThemeToggle /></div>
       <div className="max-w-3xl w-full">
         <p className="lux-eyebrow mb-4">Growth Operating System · for cafés</p>
-        <div className="flex items-center gap-4 mb-3">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo chaya one.png" alt="Chaya.One" className="h-14 md:h-16 w-auto object-contain" />
+          <img src="/logo chaya one.png" alt="Chaya.One" className="h-24 md:h-28 w-auto object-contain" />
           <h1 className="font-display text-6xl md:text-7xl leading-[0.92]">
             Cafe<span className="text-gold-d">OS</span>
           </h1>
