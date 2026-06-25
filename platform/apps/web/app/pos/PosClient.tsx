@@ -7,7 +7,8 @@ import type { Floor } from '@/lib/floors';
 import {
   ThemeToggle, Table2, ClipboardList, LayoutDashboard, RefreshCw, Coffee,
   Plus, Minus, X, Check, Printer, Receipt, Smartphone, Banknote, CreditCard,
-  CupSoda, UtensilsCrossed, Croissant, Cake, Soup, User, QrCode, type LucideIcon,
+  CupSoda, UtensilsCrossed, Croissant, Cake, Soup, User, QrCode,
+  ShoppingCart, ChevronUp, Menu, Search, type LucideIcon,
 } from '@/components/ui';
 import { ShiftStatus } from '@/components/ShiftStatus';
 
@@ -68,6 +69,7 @@ function tableStage(status?: string): TableStage {
 
 export default function PosClient({ outlet, staff, menu, tables, floors }: { outlet: Outlet; staff: Staff; menu: MenuCategory[]; tables: TableDto[]; floors: Floor[] }) {
   const [activeCat, setActiveCat] = useState(menu[0]?.id ?? '');
+  const [search, setSearch] = useState('');
   const [cart, setCart] = useState<Line[]>([]);
   const [orderType, setOrderType] = useState<'dine_in' | 'takeaway'>('dine_in');
   const [tableId, setTableId] = useState<string | null>(null);
@@ -76,6 +78,12 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
   const [floorOpen, setFloorOpen] = useState(false);
   const [floorFilter, setFloorFilter] = useState<string>('all'); // 'all' | floorId | 'unassigned'
   const [charging, setCharging] = useState(false);
+  // when Send/Charge is tapped with no table, we open the floor map and remember the
+  // intent here, then resume it (below) the moment a table is picked
+  const [pendingAction, setPendingAction] = useState<null | 'kot' | 'charge'>(null);
+  // mobile-only chrome: bottom-sheet cart + "More" drawer (phones; hidden at md+)
+  const [cartSheetOpen, setCartSheetOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [live, setLive] = useState<LiveTicket[]>([]);
@@ -88,6 +96,16 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  // mobile overlays (cart sheet / More drawer): lock background scroll + ESC to close
+  useEffect(() => {
+    if (!cartSheetOpen && !moreOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setCartSheetOpen(false); setMoreOpen(false); } };
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+  }, [cartSheetOpen, moreOpen]);
 
   // live table occupancy (occupied until the bill is settled)
   const refreshTables = () => fetch('/api/tables').then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.occupied) setOccupied(d.occupied); }).catch(() => {});
@@ -120,6 +138,7 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
   }
 
   async function openTableActions(t: TableDto) {
+    setPendingAction(null); // tapping an occupied table diverts to its running order, not the new ticket
     setTableAction({ id: t.id, label: t.label });
     setTableOrder(null);
     setAskSettle(false);
@@ -309,6 +328,16 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
   const cat = menu.find((c) => c.id === activeCat) ?? menu[0];
   const selectedTable = tables.find((t) => t.id === tableId);
 
+  // Menu search: a non-empty query shows matches across ALL categories; an empty
+  // one falls back to the active category. Each item carries its category name so
+  // the card still shows the right food glyph when results are mixed.
+  const q = search.trim().toLowerCase();
+  const shownItems = useMemo(() => {
+    const withCat = (c: MenuCategory) => c.items.map((it) => ({ ...it, catName: c.name }));
+    if (q) return menu.flatMap(withCat).filter((it) => it.name.toLowerCase().includes(q));
+    return cat ? withCat(cat) : [];
+  }, [q, menu, cat]);
+
   const bill = useMemo(() => {
     const lines: BillLine[] = cart.map((l) => ({ pricePaise: l.pricePaise, gstRate: l.gstRate, qty: l.qty }));
     return computeBill(lines, { discountPct, serviceChargePct: scPct, gstEnabled: outlet.gstEnabled, gstRateOverride: outlet.gstRate, gstInclusive: outlet.gstInclusive });
@@ -333,12 +362,18 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
     setCart([]); setDiscountPct(0); setScPct(0);
   }
 
+  // shared "Charge →" entry: dine-in needs a table first (opens the floor map)
+  function startCharge() {
+    if (orderType === 'dine_in' && !tableId) { setPendingAction('charge'); setFloorOpen(true); flash('Pick a table first'); return; }
+    setCharging(true);
+  }
+
   async function submit(
     withPayment: null | { method: 'cash' | 'upi' | 'card'; tipPaise: number },
     opts?: { customer?: { name: string; phone: string } | null; print?: boolean },
   ) {
     if (!cart.length) return;
-    if (orderType === 'dine_in' && !tableId) { setCharging(false); setFloorOpen(true); flash('Pick a table first'); return; }
+    if (orderType === 'dine_in' && !tableId) { setCharging(false); setPendingAction('kot'); setFloorOpen(true); flash('Pick a table first'); return; }
     setBusy(true);
     try {
       const body = {
@@ -380,10 +415,68 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
     }
   }
 
+  // After a Send/Charge tap opened the floor map to pick a table, resume that action
+  // once a table is chosen (runs on the next render, so tableId is already set).
+  useEffect(() => {
+    if (!tableId || !pendingAction) return;
+    const action = pendingAction;
+    setPendingAction(null);
+    if (action === 'charge') setCharging(true);
+    else void submit(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tableId, pendingAction]);
+
+  const cartCount = cart.reduce((s, l) => s + l.qty, 0);
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_300px] lg:grid-cols-[232px_1fr_360px] gap-4 h-auto md:h-screen p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
-      {/* left rail */}
-      <aside className="flex flex-col gap-3.5">
+    <>
+      {/* ── Mobile top bar + category chips — sticky, phones only (md:hidden) ── */}
+      <div className="md:hidden sticky top-0 z-30" style={{ paddingTop: 'env(safe-area-inset-top)', background: 'color-mix(in srgb, var(--paper) 90%, transparent)', backdropFilter: 'blur(10px)', borderBottom: '1px solid var(--line)' }}>
+        <div className="flex items-center gap-2 px-3 py-2">
+          <button onClick={() => setMoreOpen(true)} aria-label="Open menu" aria-haspopup="dialog" aria-expanded={moreOpen} className="btn btn-icon btn-sm btn-ghost shrink-0"><Menu size={20} aria-hidden /></button>
+          <div className="flex rounded-full p-[3px] border flex-1 min-w-0" style={{ background: 'var(--paper-2)', borderColor: 'var(--line)' }}>
+            {(['dine_in', 'takeaway'] as const).map((t) => (
+              <button key={t} onClick={() => { setOrderType(t); if (t === 'takeaway') setTableId(null); }}
+                className="flex-1 py-2 rounded-full font-bold text-[12.5px] transition"
+                style={orderType === t ? { background: 'var(--ink)', color: 'var(--paper-2)' } : { color: 'var(--ink-2)' }}>
+                {t === 'dine_in' ? 'Dine-in' : 'Takeaway'}
+              </button>
+            ))}
+          </div>
+          {orderType === 'dine_in' && (
+            <button onClick={() => setFloorOpen(true)} aria-label={selectedTable ? `Table ${selectedTable.label}` : 'Pick a table'}
+              className="flex items-center gap-1.5 h-10 px-3 rounded-full border-[1.5px] font-bold text-[12.5px] shrink-0 whitespace-nowrap"
+              style={{ borderColor: !tableId ? 'var(--clay)' : 'var(--line)', color: !tableId ? 'var(--clay)' : 'var(--ink-2)', background: 'var(--paper-2)' }}>
+              <Table2 size={14} aria-hidden />{selectedTable ? `T${selectedTable.label}` : 'Table'}
+            </button>
+          )}
+        </div>
+        <div className="px-3 pb-2">
+          <div className="relative">
+            <Search size={16} aria-hidden className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search menu…" aria-label="Search menu" type="search"
+              className="w-full pl-9 pr-9 py-2.5 rounded-full border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line)' }} />
+            {search && <button onClick={() => setSearch('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 grid place-items-center" style={{ color: 'var(--ink-3)' }}><X size={16} aria-hidden /></button>}
+          </div>
+        </div>
+        <div className="subtabs px-3 pb-2">
+          {menu.map((c) => {
+            const Ic = CAT_ICON[c.name] ?? Coffee;
+            const on = c.id === activeCat && !q;
+            return (
+              <button key={c.id} onClick={() => { setActiveCat(c.id); setSearch(''); }} aria-pressed={on}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-full border font-bold text-[13px] whitespace-nowrap transition"
+                style={on ? { background: 'var(--ink)', color: 'var(--paper-3)', borderColor: 'var(--ink)' } : { background: 'var(--paper-2)', borderColor: 'var(--line)', color: 'var(--ink-2)' }}>
+                <Ic size={15} aria-hidden />{c.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_300px] lg:grid-cols-[232px_1fr_360px] gap-4 h-auto md:h-screen p-4 pt-3 md:pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
+      {/* left rail — desktop / tablet only (mobile uses the top bar + More drawer) */}
+      <aside className="hidden md:flex flex-col gap-3.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-12 h-7 shrink-0 overflow-hidden flex items-center justify-center">
@@ -417,9 +510,9 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
         <div className="flex flex-col gap-1.5 overflow-auto flex-1">
           {menu.map((c) => {
             const Ic = CAT_ICON[c.name] ?? Coffee;
-            const on = c.id === activeCat;
+            const on = c.id === activeCat && !q;
             return (
-              <button key={c.id} onClick={() => setActiveCat(c.id)} aria-pressed={on}
+              <button key={c.id} onClick={() => { setActiveCat(c.id); setSearch(''); }} aria-pressed={on}
                 className="flex items-center gap-3 px-3 py-3 rounded-[14px] border font-bold text-sm transition text-left"
                 style={on ? { background: 'var(--ink)', color: 'var(--paper-3)', borderColor: 'var(--ink)' } : { background: 'var(--paper-2)', borderColor: 'var(--line)', color: 'var(--ink-2)' }}>
                 <Ic size={18} aria-hidden className="shrink-0" />{c.name}
@@ -445,22 +538,35 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
       </aside>
 
       {/* menu grid */}
-      <section className="flex flex-col min-w-0">
-        <div className="flex items-center gap-4 mb-3.5">
-          <h2 className="text-[28px]">{cat?.name}</h2>
-          <span className="pill ml-auto">{outlet.stateCode} · GST intra-state</span>
+      <section className="flex flex-col min-w-0 pb-[calc(76px_+_env(safe-area-inset-bottom))] md:pb-0">
+        <div className="flex items-center gap-3 mb-3.5">
+          <h2 className="text-2xl md:text-[28px] shrink-0">{q ? `“${search.trim()}”` : cat?.name}</h2>
+          {/* desktop search — tablet/desktop only; phones search from the top bar */}
+          <div className="relative ml-auto hidden md:block w-full max-w-[240px]">
+            <Search size={16} aria-hidden className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search menu…" aria-label="Search menu" type="search"
+              className="w-full pl-9 pr-9 py-2 rounded-full border text-sm outline-none" style={{ background: 'var(--paper-2)', borderColor: 'var(--line)' }} />
+            {search && <button onClick={() => setSearch('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 grid place-items-center" style={{ color: 'var(--ink-3)' }}><X size={15} aria-hidden /></button>}
+          </div>
+          <span className="pill shrink-0 hidden lg:inline-flex">{outlet.stateCode} · GST intra-state</span>
         </div>
 
         {live.length > 0 && <LiveOrders tickets={live} now={now} />}
 
-        <div className="grid gap-3 overflow-auto content-start pr-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px,1fr))' }}>
-          {cat?.items.map((m) => (
+        <div className="grid gap-3 overflow-visible md:overflow-auto content-start pr-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px,1fr))' }}>
+          {shownItems.length === 0 ? (
+            <div className="col-span-full grid place-content-center text-center gap-2 py-12" style={{ color: 'var(--ink-3)' }}>
+              <Search size={34} className="mx-auto opacity-40" aria-hidden />
+              <p>{q ? `No items match “${search.trim()}”.` : 'No items in this category.'}</p>
+            </div>
+          ) : shownItems.map((m) => (
             <button key={m.id} onClick={() => add(m)}
               className="relative text-left p-3.5 rounded-[14px] border flex flex-col gap-2 transition hover:-translate-y-0.5"
               style={{ background: 'var(--paper-2)', borderColor: 'var(--line)', boxShadow: 'var(--sh-1)' }}>
               {m.tags.includes('bestseller') && <span className="absolute top-0 left-0 text-[9.5px] font-extrabold text-white px-2 py-0.5" style={{ background: 'var(--turmeric-d)', borderRadius: '14px 0 14px 0' }}>★ Bestseller</span>}
-              <div className="text-3xl" aria-hidden>{EMOJI[cat.name] ?? '🍽'}</div>
+              <div className="text-3xl" aria-hidden>{EMOJI[m.catName] ?? '🍽'}</div>
               <div className="font-bold text-sm leading-tight">{m.name}</div>
+              {q && <div className="text-[10.5px] font-bold" style={{ color: 'var(--ink-3)' }}>{m.catName}</div>}
               <div className="flex items-center justify-between mt-auto">
                 <span className="tnum text-sm" style={{ fontFamily: 'var(--font-mono)' }}>{formatINR(m.pricePaise)}</span>
                 <span className="text-[10px] font-bold" style={{ color: 'var(--ink-3)' }}>GST {m.gstRate}%</span>
@@ -470,8 +576,8 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
         </div>
       </section>
 
-      {/* cart */}
-      <aside className="card flex flex-col p-[18px] min-h-0">
+      {/* cart — desktop / tablet right rail (mobile uses the bottom-sheet) */}
+      <aside className="card hidden md:flex flex-col p-[18px] min-h-0">
         <div className="flex justify-between items-start mb-3.5">
           <div>
             <h3 className="text-[19px]">Current ticket</h3>
@@ -486,46 +592,11 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
           <button onClick={clear} disabled={!cart.length} title="Clear ticket" aria-label="Clear ticket" className="btn btn-icon btn-sm btn-ghost"><RefreshCw size={16} aria-hidden /></button>
         </div>
 
-        <div className="flex-1 overflow-auto flex flex-col gap-2">
-          {!cart.length ? (
-            <div className="grid place-content-center text-center h-full gap-2" style={{ color: 'var(--ink-3)' }}>
-              <Coffee size={40} className="mx-auto opacity-40" aria-hidden /><p>Tap items to build the ticket.</p>
-            </div>
-          ) : cart.map((l) => (
-            <div key={l.key} className="grid grid-cols-[1fr_auto_auto] gap-2.5 items-center p-2.5 rounded-[14px] border" style={{ background: 'var(--paper-3)', borderColor: 'var(--line)' }}>
-              <div className="font-bold text-[13.5px]">{l.name}</div>
-              <div className="flex items-center gap-1.5">
-                <button onClick={() => bump(l.key, -1)} aria-label={`Decrease ${l.name}`} className="w-8 h-8 grid place-items-center rounded-[9px] border" style={{ background: 'var(--paper)', borderColor: 'var(--line-2)' }}><Minus size={15} aria-hidden /></button>
-                <span className="font-bold w-5 text-center tnum">{l.qty}</span>
-                <button onClick={() => bump(l.key, 1)} aria-label={`Increase ${l.name}`} className="w-8 h-8 grid place-items-center rounded-[9px] border" style={{ background: 'var(--paper)', borderColor: 'var(--line-2)' }}><Plus size={15} aria-hidden /></button>
-              </div>
-              <span className="text-[13.5px] tnum" style={{ fontFamily: 'var(--font-mono)' }}>{formatINR(l.pricePaise * l.qty)}</span>
-            </div>
-          ))}
-        </div>
-
-        {cart.length > 0 && (
-          <div className="border-t border-dashed mt-3 pt-3" style={{ borderColor: 'var(--line-2)' }}>
-            <Row label={outlet.gstEnabled && outlet.gstInclusive ? 'Taxable value' : 'Subtotal'} val={formatINR(bill.subtotalPaise)} />
-            {discountPct > 0 && <Row label={`Discount (${discountPct}%)`} val={`− ${formatINR(bill.discountPaise)}`} accent />}
-            {outlet.gstEnabled && <Row label="CGST" val={formatINR(bill.cgstPaise)} sub />}
-            {outlet.gstEnabled && <Row label="SGST" val={formatINR(bill.sgstPaise)} sub />}
-            {outlet.gstEnabled && outlet.gstInclusive && <div className="text-[10px] mt-0.5" style={{ color: 'var(--ink-3)' }}>Menu prices include GST</div>}
-            {scPct > 0 && <Row label="Service charge" val={formatINR(bill.serviceChargePaise)} />}
-            <Row label="Round-off" val={`${bill.roundOffPaise >= 0 ? '+' : '−'} ${formatINR(Math.abs(bill.roundOffPaise))}`} sub />
-            <div className="flex justify-between font-extrabold font-display text-[19px] mt-2 pt-2 border-t" style={{ borderColor: 'var(--line)' }}>
-              <span>Total</span><span className="tnum" style={{ fontFamily: 'var(--font-mono)' }}>{formatINR(bill.totalPaise)}</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {[0, 5, 10].map((d) => <Chip key={d} on={d === discountPct} onClick={() => setDiscountPct(d)}>{d ? `${d}% off` : 'No disc.'}</Chip>)}
-              <Chip on={scPct > 0} onClick={() => setScPct(scPct ? 0 : 5)}>+SC 5%</Chip>
-            </div>
-          </div>
-        )}
+        <CartBody cart={cart} bill={bill} outlet={outlet} discountPct={discountPct} scPct={scPct} setDiscountPct={setDiscountPct} setScPct={setScPct} bump={bump} />
 
         <div className="grid grid-cols-[1fr_1.2fr] gap-2.5 mt-3.5">
           <button disabled={!cart.length || busy} onClick={() => submit(null)} className="btn btn-dark">Send to KOT</button>
-          <button disabled={!cart.length || busy} onClick={() => { if (orderType === 'dine_in' && !tableId) { setFloorOpen(true); flash('Pick a table first'); return; } setCharging(true); }} className="btn btn-primary">Charge →</button>
+          <button disabled={!cart.length || busy} onClick={startCharge} className="btn btn-primary">Charge →</button>
         </div>
       </aside>
 
@@ -574,7 +645,7 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
         const shownGroups = showAll ? groups : groups.filter((g) => g.key === floorFilter);
 
         return (
-        <Modal onClose={() => setFloorOpen(false)} title="Floor map">
+        <Modal onClose={() => { setFloorOpen(false); setPendingAction(null); }} title="Floor map">
           {/* status legend — by order stage */}
           <div className="flex flex-wrap gap-4 px-5 pt-4">
             {TABLE_STAGE_ORDER.map((k) => (
@@ -759,11 +830,156 @@ export default function PosClient({ outlet, staff, menu, tables, floors }: { out
       )}
 
       {toast && (
-        <div role="status" aria-live="polite" className="anim-slide-in fixed left-1/2 -translate-x-1/2 bottom-7 z-[9000] px-5 py-3 rounded-full font-bold text-sm shadow-3" style={{ background: 'var(--ink)', color: 'var(--paper-2)' }}>
+        <div role="status" aria-live="polite" className="anim-slide-in fixed left-1/2 -translate-x-1/2 bottom-[calc(76px_+_env(safe-area-inset-bottom))] md:bottom-7 z-[9000] px-5 py-3 rounded-full font-bold text-sm shadow-3" style={{ background: 'var(--ink)', color: 'var(--paper-2)' }}>
           {toast}
         </div>
       )}
     </div>
+
+      {/* ── Mobile sticky cart bar — taps open the bottom-sheet (phones only) ── */}
+      {!cartSheetOpen && cartCount > 0 && (
+        <button onClick={() => setCartSheetOpen(true)} aria-haspopup="dialog" aria-label={`View ticket · ${cartCount} items · ${formatINR(bill.totalPaise)}`}
+          className="md:hidden fixed bottom-0 inset-x-0 z-40 flex items-center gap-3 px-5 anim-slide-in"
+          style={{ paddingTop: '0.85rem', paddingBottom: 'max(0.85rem, env(safe-area-inset-bottom))', background: 'var(--ink)', color: 'var(--paper-2)', boxShadow: 'var(--sh-3)' }}>
+          <span className="relative grid place-items-center w-9 h-9 rounded-full shrink-0" style={{ background: 'color-mix(in srgb, var(--paper-2) 16%, transparent)' }}>
+            <ShoppingCart size={18} aria-hidden />
+          </span>
+          <span className="font-bold text-[13.5px]">{cartCount} item{cartCount > 1 ? 's' : ''}</span>
+          <span className="ml-auto font-display font-extrabold text-[18px] tnum">{formatINR(bill.totalPaise)}</span>
+          <ChevronUp size={18} aria-hidden />
+        </button>
+      )}
+
+      {/* ── Mobile cart bottom-sheet — full ticket + Send to Kitchen / Charge ── */}
+      {cartSheetOpen && (
+        <div className="md:hidden fixed inset-0 z-[700] flex flex-col justify-end" role="dialog" aria-modal="true" aria-label="Current ticket">
+          <div className="absolute inset-0 anim-fade" style={{ background: 'var(--scrim)' }} onClick={() => setCartSheetOpen(false)} />
+          <div className="relative anim-sheet flex flex-col max-h-[88vh] rounded-t-[26px] border-t" style={{ background: 'var(--paper-2)', borderColor: 'var(--line)' }}>
+            <div className="relative pt-3">
+              <span className="absolute left-1/2 -translate-x-1/2 top-2 w-10 h-1.5 rounded-full" style={{ background: 'var(--line-2)' }} aria-hidden />
+              <div className="flex items-start gap-2 px-5 pt-2 pb-1">
+                <div>
+                  <h3 className="text-[18px] font-display font-bold">Current ticket</h3>
+                  {orderType === 'dine_in' ? (
+                    <button onClick={() => { setCartSheetOpen(false); setFloorOpen(true); }} className="text-[12.5px] font-bold" style={{ color: !tableId ? 'var(--clay)' : 'var(--cardamom-d)' }}>
+                      {selectedTable ? `Table ${selectedTable.label}` : 'Pick a table'}
+                    </button>
+                  ) : (
+                    <span className="text-[12.5px] font-bold" style={{ color: 'var(--cardamom-d)' }}>Takeaway</span>
+                  )}
+                </div>
+                <button onClick={clear} disabled={!cart.length} title="Clear ticket" aria-label="Clear ticket" className="btn btn-icon btn-sm btn-ghost ml-auto"><RefreshCw size={16} aria-hidden /></button>
+                <button onClick={() => setCartSheetOpen(false)} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] border text-xl shrink-0" style={{ background: 'var(--paper)', borderColor: 'var(--line)' }}>×</button>
+              </div>
+            </div>
+            <div className="flex flex-col flex-1 min-h-0 px-5 pb-[max(1.1rem,env(safe-area-inset-bottom))]">
+              <CartBody cart={cart} bill={bill} outlet={outlet} discountPct={discountPct} scPct={scPct} setDiscountPct={setDiscountPct} setScPct={setScPct} bump={bump} />
+              <div className="flex flex-col gap-2.5 mt-3.5">
+                <button disabled={!cart.length || busy} onClick={() => { setCartSheetOpen(false); submit(null); }} className="btn btn-primary btn-lg w-full">Send to Kitchen</button>
+                <button disabled={!cart.length || busy} onClick={() => { setCartSheetOpen(false); startCharge(); }} className="btn btn-dark w-full">Charge · {formatINR(bill.totalPaise)} →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Mobile "More" drawer — staff, shift, floor map, approvals, dashboard ── */}
+      {moreOpen && (
+        <div className="md:hidden fixed inset-0 z-[700]" role="dialog" aria-modal="true" aria-label="Menu">
+          <div className="absolute inset-0 anim-fade" style={{ background: 'var(--scrim)' }} onClick={() => setMoreOpen(false)} />
+          <aside className="anim-drawer-l absolute left-0 top-0 h-full w-[82%] max-w-[300px] flex flex-col gap-3 p-4 overflow-y-auto no-scrollbar"
+            style={{ background: 'var(--paper-2)', borderRight: '1px solid var(--line)', paddingTop: 'calc(1rem + env(safe-area-inset-top))', paddingLeft: 'calc(1rem + env(safe-area-inset-left))' }}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-12 h-7 shrink-0 overflow-hidden flex items-center justify-center">
+                  <img src="/logo chaya one.png" alt="ChayaOne" className="w-full h-full object-contain" />
+                </div>
+                <span className="font-display font-bold text-[16px] truncate">{(outlet.name.split('—')[0] ?? '').trim()}</span>
+              </div>
+              <ThemeToggle />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-7 h-7 rounded-full grid place-items-center text-[11px] font-extrabold text-white" style={{ background: 'linear-gradient(135deg, var(--turmeric), var(--clay))' }}>{staff.name[0]}</span>
+              <span className="text-[13px] font-bold">{staff.name}</span>
+              <span className="pill" style={{ padding: '2px 8px', fontSize: '10px', textTransform: 'capitalize' }}>{staff.role}</span>
+            </div>
+            <ShiftStatus />
+            <button onClick={() => { setMoreOpen(false); setFloorOpen(true); }} className="flex items-center gap-2.5 px-3 py-3 rounded-[14px] border-[1.5px] border-dashed font-bold text-[14px]" style={{ borderColor: 'var(--line-2)', color: 'var(--ink-2)' }}>
+              <Table2 size={18} aria-hidden /> Floor map &amp; tables
+            </button>
+            <a href="/approvals" className="relative flex items-center gap-2.5 px-3 py-3 rounded-[14px] font-bold text-[14px]" style={{ background: 'var(--paper-3)', border: '1px solid var(--line)', color: 'var(--ink-2)' }}>
+              <ClipboardList size={18} aria-hidden /> QR Approvals
+              {pendingApprovals > 0 && (
+                <span className="ml-auto min-w-[22px] h-[22px] px-1.5 grid place-items-center rounded-full text-[11px] font-extrabold text-white tnum" style={{ background: 'var(--clay)' }} aria-label={`${pendingApprovals} pending`}>{pendingApprovals}</span>
+              )}
+            </a>
+            {(staff.role === 'owner' || staff.role === 'manager') && (
+              <a href="/dashboard" className="flex items-center gap-2.5 px-3 py-3 rounded-[14px] font-bold text-[14px]" style={{ background: 'var(--turmeric)', color: '#2A1607', border: '1px solid var(--turmeric-d)' }}>
+                <LayoutDashboard size={18} aria-hidden /> Owner Dashboard
+              </a>
+            )}
+          </aside>
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Cart contents shared by the desktop right rail and the mobile bottom-sheet:
+ * the scrollable line list (with empty state) + the totals / discount / SC block.
+ * The action buttons (Send to KOT / Charge) stay with each caller so desktop and
+ * mobile can emphasise them differently. Qty steppers are 44px on phones, 32px at md+.
+ */
+function CartBody({ cart, bill, outlet, discountPct, scPct, setDiscountPct, setScPct, bump }: {
+  cart: Line[];
+  bill: ReturnType<typeof computeBill>;
+  outlet: Outlet;
+  discountPct: number;
+  scPct: number;
+  setDiscountPct: (n: number) => void;
+  setScPct: (n: number) => void;
+  bump: (key: string, d: number) => void;
+}) {
+  return (
+    <>
+      <div className="flex-1 overflow-auto flex flex-col gap-2 min-h-0">
+        {!cart.length ? (
+          <div className="grid place-content-center text-center h-full gap-2 py-8" style={{ color: 'var(--ink-3)' }}>
+            <Coffee size={40} className="mx-auto opacity-40" aria-hidden /><p>Tap items to build the ticket.</p>
+          </div>
+        ) : cart.map((l) => (
+          <div key={l.key} className="grid grid-cols-[1fr_auto_auto] gap-2.5 items-center p-2.5 rounded-[14px] border" style={{ background: 'var(--paper-3)', borderColor: 'var(--line)' }}>
+            <div className="font-bold text-[13.5px]">{l.name}</div>
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => bump(l.key, -1)} aria-label={`Decrease ${l.name}`} className="w-11 h-11 md:w-8 md:h-8 grid place-items-center rounded-[9px] border" style={{ background: 'var(--paper)', borderColor: 'var(--line-2)' }}><Minus size={15} aria-hidden /></button>
+              <span className="font-bold w-6 text-center tnum">{l.qty}</span>
+              <button onClick={() => bump(l.key, 1)} aria-label={`Increase ${l.name}`} className="w-11 h-11 md:w-8 md:h-8 grid place-items-center rounded-[9px] border" style={{ background: 'var(--paper)', borderColor: 'var(--line-2)' }}><Plus size={15} aria-hidden /></button>
+            </div>
+            <span className="text-[13.5px] tnum" style={{ fontFamily: 'var(--font-mono)' }}>{formatINR(l.pricePaise * l.qty)}</span>
+          </div>
+        ))}
+      </div>
+
+      {cart.length > 0 && (
+        <div className="border-t border-dashed mt-3 pt-3" style={{ borderColor: 'var(--line-2)' }}>
+          <Row label={outlet.gstEnabled && outlet.gstInclusive ? 'Taxable value' : 'Subtotal'} val={formatINR(bill.subtotalPaise)} />
+          {discountPct > 0 && <Row label={`Discount (${discountPct}%)`} val={`− ${formatINR(bill.discountPaise)}`} accent />}
+          {outlet.gstEnabled && <Row label="CGST" val={formatINR(bill.cgstPaise)} sub />}
+          {outlet.gstEnabled && <Row label="SGST" val={formatINR(bill.sgstPaise)} sub />}
+          {outlet.gstEnabled && outlet.gstInclusive && <div className="text-[10px] mt-0.5" style={{ color: 'var(--ink-3)' }}>Menu prices include GST</div>}
+          {scPct > 0 && <Row label="Service charge" val={formatINR(bill.serviceChargePaise)} />}
+          <Row label="Round-off" val={`${bill.roundOffPaise >= 0 ? '+' : '−'} ${formatINR(Math.abs(bill.roundOffPaise))}`} sub />
+          <div className="flex justify-between font-extrabold font-display text-[19px] mt-2 pt-2 border-t" style={{ borderColor: 'var(--line)' }}>
+            <span>Total</span><span className="tnum" style={{ fontFamily: 'var(--font-mono)' }}>{formatINR(bill.totalPaise)}</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {[0, 5, 10].map((d) => <Chip key={d} on={d === discountPct} onClick={() => setDiscountPct(d)}>{d ? `${d}% off` : 'No disc.'}</Chip>)}
+            <Chip on={scPct > 0} onClick={() => setScPct(scPct ? 0 : 5)}>+SC 5%</Chip>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

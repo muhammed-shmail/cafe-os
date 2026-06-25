@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   applicationName: 'ChayaOne',
   // installable PWA: iOS standalone + home-screen icons (icons are generated PNGs)
   appleWebApp: { capable: true, statusBarStyle: 'default', title: 'ChayaOne' },
-  icons: { icon: '/fib icon.jpg', apple: '/fib icon.jpg' },
+  icons: { icon: '/app.png', apple: '/app.png' },
 };
 
 export const viewport: Viewport = {

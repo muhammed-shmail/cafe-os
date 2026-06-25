@@ -22,3 +22,6 @@ prisma/*.db
 .DS_Store
 Thumbs.db
 .vscode/
+
+# User Uploads
+apps/web/public/uploads/

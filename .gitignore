@@ -29,3 +29,6 @@ prisma/*.db
 Thumbs.db
 .vscode/
 .idea/
+
+# User Uploads
+platform/apps/web/public/uploads/

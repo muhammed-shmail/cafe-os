@@ -13,7 +13,7 @@ export type Branding = {
   poweredBy: boolean;
 };
 
-const DEFAULTS: Branding = { appName: 'ChayaOne', logoUrl: '/logo chaya one.png', faviconUrl: '/fib icon.jpg', colors: {}, poweredBy: true };
+const DEFAULTS: Branding = { appName: 'ChayaOne', logoUrl: '/logo chaya one.png', faviconUrl: '/app.png', colors: {}, poweredBy: true };
 
 export async function getTenantBranding(tenantId: string): Promise<Branding> {
   const b = await prisma.tenantBranding.findUnique({ where: { tenantId } });
