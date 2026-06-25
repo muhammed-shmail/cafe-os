@@ -20,7 +20,10 @@ async function askGemini(
   }
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // Model is env-overridable so a Google model retirement (e.g. gemini-1.5-flash
+    // was sunset → 404) is a config change, not a code change.
+    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     const systemInstruction = `You are the Cafe OS AI Sales Assistant, a helpful, expert Indian Cafe operations co-pilot.
 You have access to live analytics data for the user's cafe outlet.
